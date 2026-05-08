@@ -1,595 +1,325 @@
 import tkinter as tk
-from tkinter import ttk, filedialog
+from tkinter import ttk, filedialog, messagebox
 import threading
 import os
-from datetime import datetime
 
-BG       = "#F7FAFC"
-WHITE    = "#FFFFFF"
-PURPLE   = "#667EEA"
-PURPLE2  = "#764BA2"
-BORDER   = "#E2E8F0"
-DARK     = "#2D3748"
-GRAY     = "#718096"
-MED      = "#4A5568"
+try:
+    from student_dashboard import supabase, BG, WHITE, PURPLE, PURPLE2, BORDER, TEXT_DARK, TEXT_GRAY
+except ImportError:
+    BG=WHITE=PURPLE=PURPLE2=BORDER=TEXT_DARK=TEXT_GRAY=""
+    supabase = None
+
 INPUT_BG = "#F7FAFC"
 DISABLED = "#EDF2F7"
-RED      = "#F56565"
+VIOLET   = "#9B59B6"
+RED      = "#E53E3E"
 GREEN    = "#48BB78"
-SHADOW   = "#CBD5E0"
-DIVIDER  = "#E2E8F0"
 
-MUNICIPALITIES = [
-    "Majayjay", "Liliw", "Magdalena", "Luisiana", "Cavinti",
-    "Kalayaan", "Pagsanjan", "Pangil", "Pakil", "Siniloan",
-    "Famy", "Santa Maria", "Nagcarlan", "Rizal", "San Pablo City",
-]
-
+GRADE_LEVELS = ['Grade 11','Grade 12','1st Year','2nd Year','3rd Year','4th Year']
 BARANGAYS = [
-    "Barangay 1 (Poblacion)", "Barangay 2 (Poblacion)",
-    "Barangay 3 (Poblacion)", "Barangay 4 (Poblacion)",
-    "Barangay 5 (Poblacion)", "Barangay 6 (Poblacion)",
-    "Barangay 7 (Poblacion)", "Barangay 8 (Poblacion)",
-    "Anulin", "Bakia", "Bukal", "Bunga", "Buo", "Burlungan",
-    "Cigaras", "Halayhayin", "Humalin", "Ibabang Palina",
-    "Ibabang Sungi", "Ibabang Taykin", "Ilayang Palina",
-    "Ilayang Sungi", "Ilayang Taykin", "Isabang", "Malinao",
-    "Manaol", "Munting Kawayan", "Olla", "Palayan", "Pansol",
-    "Patimbao", "Pook", "Talortor", "Tawagan", "Taytay", "Tipacan",
+    'Amonoy','Bakia','Balanac','Balayong','Banilad','Banti','Bitaoy',
+    'Botocan','Bukal','Burgos','Burol','Coralao','Gagalot','Ibabang Banga',
+    'Ibabang Bayucain','Ilayang Banga','Ilayang Bayucain','Isabang','Malinao',
+    'May-it','Munting Kawayan','Olla','Oobi','Origuel (Poblacion)','Panalaban',
+    'Pangil','Panglan','Piit','Pook','Rizal','San Francisco (Poblacion)',
+    'San Isidro','San Miguel (Poblacion)','San Roque','Santa Catalina','Suba',
+    'Talortor','Tanawan','Taytay','Villa Nogales',
 ]
 
-YEAR_LEVELS   = ["1st Year", "2nd Year", "3rd Year", "4th Year", "5th Year"]
-CURRENT_YEAR  = datetime.now().year
-YEAR_OPTIONS  = [str(y) for y in range(CURRENT_YEAR, CURRENT_YEAR - 6, -1)]
 
-
-class RenewalScholarshipPage(tk.Frame):
-    def __init__(self, parent, user: dict):
+class RenewFrame(tk.Frame):
+    def __init__(self, parent, name, email, dashboard, **_):
         super().__init__(parent, bg=BG)
-        self.pack(fill="both", expand=True)
-        self.user      = user
-        self._vars     = {}
-        self._doc_paths = {}
-        self._doc_rows  = {}
-        self._build_ui()
-        # Pre-fill from approved application + check for pending renewal
-        threading.Thread(target=self._prefill, daemon=True).start()
+        self.name       = name
+        self.email      = email
+        self.dashboard  = dashboard
+        self._files     = {k: None for k in
+                           ('school_id','id_picture','birth_cert','grades','cor')}
+        self._file_labels = {}
+        self._vars      = {}
+        self._build()
+        threading.Thread(target=self._load_data, daemon=True).start()
 
     # ── Build UI ───────────────────────────────────────────────────────────────
-    def _build_ui(self):
-        # Top bar
-        topbar = tk.Frame(self, bg=WHITE, height=64)
-        topbar.pack(fill="x")
-        topbar.pack_propagate(False)
-        tk.Frame(topbar, bg=BORDER, height=1).pack(side="bottom", fill="x")
-        tk.Label(topbar, text="Scholarship Renewal",
-                 bg=WHITE, fg=DARK,
-                 font=("Segoe UI", 16, "bold")).pack(side="left", padx=28, pady=16)
-
-        # Scrollable body
-        scroll_canvas = tk.Canvas(self, bg=BG, highlightthickness=0)
-        sb = tk.Scrollbar(self, orient="vertical", command=scroll_canvas.yview)
-        scroll_canvas.configure(yscrollcommand=sb.set)
+    def _build(self):
+        canvas = tk.Canvas(self, bg=BG, highlightthickness=0)
+        sb = tk.Scrollbar(self, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
-        scroll_canvas.pack(fill="both", expand=True)
+        canvas.pack(fill="both", expand=True)
 
-        inner = tk.Frame(scroll_canvas, bg=BG)
-        wid   = scroll_canvas.create_window((0, 0), window=inner, anchor="n")
+        inner = tk.Frame(canvas, bg=BG)
+        wid = canvas.create_window((0,0), window=inner, anchor="nw")
 
-        def _update_scroll(e=None):
-            bbox = scroll_canvas.bbox("all")
-            if bbox:
-                scroll_canvas.configure(scrollregion=bbox)
-        inner.bind("<Configure>", _update_scroll)
-        scroll_canvas.bind("<Configure>",
-                           lambda e: scroll_canvas.itemconfig(wid, width=e.width))
-        scroll_canvas.bind("<MouseWheel>",
-                           lambda e: scroll_canvas.yview_scroll(
-                               int(-1 * (e.delta / 120)), "units"))
-        inner.bind("<MouseWheel>",
-                   lambda e: scroll_canvas.yview_scroll(
-                       int(-1 * (e.delta / 120)), "units"))
+        def _resize(e):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.itemconfig(wid, width=e.width)
+        canvas.bind("<Configure>", _resize)
+        canvas.bind_all("<MouseWheel>",
+            lambda e: canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
 
-        # Shadow card
-        center = tk.Frame(inner, bg=BG)
-        center.pack(pady=(24, 32), padx=32, fill="x")
-        shadow = tk.Frame(center, bg=SHADOW)
-        shadow.pack(fill="x")
-        card = tk.Frame(shadow, bg=WHITE, padx=36, pady=32)
-        card.pack(fill="x", padx=2, pady=2)
+        pad = tk.Frame(inner, bg=BG)
+        pad.pack(fill="both", padx=32, pady=20)
 
-        # ── Section: Personal Information ──────────────────────────────────────
-        self._section(card, "👤  Personal Information")
+        # Header
+        hdr = tk.Frame(pad, bg=WHITE,
+                       highlightbackground=BORDER, highlightthickness=1)
+        hdr.pack(fill="x", pady=(0,16))
+        tk.Label(hdr, text="🔄 Scholarship Renewal Form",
+                 bg=WHITE, fg=VIOLET,
+                 font=("Helvetica",18,"bold"), pady=12).pack()
+        tk.Label(hdr,
+                 text="All fields marked with * are mandatory.",
+                 bg=WHITE, fg=TEXT_GRAY,
+                 font=("Helvetica",10), pady=(0,)).pack(pady=(0,12))
 
-        row1 = tk.Frame(card, bg=WHITE)
-        row1.pack(fill="x")
-        self._field_col(row1, "First Name *",  "first_name",  side="left")
-        tk.Frame(row1, bg=WHITE, width=16).pack(side="left")
-        self._field_col(row1, "Middle Name",   "middle_name", side="left")
-        tk.Frame(row1, bg=WHITE, width=16).pack(side="left")
-        self._field_col(row1, "Last Name *",   "last_name",   side="left")
+        # Info box
+        info = tk.Frame(pad, bg="#E8F5E9",
+                        highlightbackground=GREEN, highlightthickness=1)
+        info.pack(fill="x", pady=(0,16))
+        tk.Label(info,
+                 text="ℹ  Make sure all documents are ready (max 5MB each). Supported: JPG, PNG, PDF.",
+                 bg="#E8F5E9", fg="#2E7D32",
+                 font=("Helvetica",9,"bold"),
+                 pady=8, padx=12, anchor="w").pack(fill="x")
 
-        row2 = tk.Frame(card, bg=WHITE)
-        row2.pack(fill="x")
-        self._field_col(row2, "Student ID *",     "student_id",     side="left")
-        tk.Frame(row2, bg=WHITE, width=16).pack(side="left")
-        self._field_col(row2, "Contact Number *", "contact_number", side="left")
+        card = tk.Frame(pad, bg=WHITE,
+                        highlightbackground=BORDER, highlightthickness=1)
+        card.pack(fill="x")
 
-        # ── Section: Address ───────────────────────────────────────────────────
-        self._section(card, "📍  Address")
+        self._section(card,"👤 Personal Information")
+        self._field(card,"firstName","First Name *",   disabled=True)
+        self._field(card,"middleName","Middle Name",   disabled=True, required=False)
+        self._field(card,"surname","Last Name *",      disabled=True)
+        self._field(card,"studentId","Student ID *")
+        self._field(card,"contact","Contact Number *")
 
-        row3 = tk.Frame(card, bg=WHITE)
-        row3.pack(fill="x")
-        self._dropdown_col(row3, "Municipality *", "municipality",
-                           MUNICIPALITIES, side="left")
-        tk.Frame(row3, bg=WHITE, width=16).pack(side="left")
-        self._dropdown_col(row3, "Barangay *", "barangay",
-                           BARANGAYS, side="left")
+        self._section(card,"📍 Address")
+        self._field(card,"houseStreet","House No. / Street *")
+        self._dropdown(card,"barangay","Barangay *", BARANGAYS)
+        self._field(card,"municipality","Municipality",disabled=True)
+        self._vars["municipality"].set("Majayjay")
 
-        # ── Section: Academic Information ──────────────────────────────────────
-        self._section(card, "🎓  Academic Information")
+        self._section(card,"🎓 Academic Information")
+        self._field(card,"course","Course / Program *")
+        self._dropdown(card,"yearLevel","Year Level *", GRADE_LEVELS)
+        self._field(card,"gwa","GWA *")
 
-        self._flabel(card, "School Name *")
-        self._input(card, "school_name")
+        self._section(card,"📎 Required Documents")
+        for key, lbl in [
+            ("school_id",  "School ID *"),
+            ("id_picture", "2x2 ID Picture *"),
+            ("birth_cert", "Birth Certificate *"),
+            ("grades",     "Copy of Grades *"),
+            ("cor",        "COR (Certificate of Registration) *"),
+        ]:
+            self._doc_upload(card, key, lbl)
 
-        row4 = tk.Frame(card, bg=WHITE)
-        row4.pack(fill="x")
-        self._field_col(row4, "Course / Program *", "course", side="left")
-        tk.Frame(row4, bg=WHITE, width=16).pack(side="left")
+        self._section(card,"💭 Reason for Renewal *")
+        self._reason = tk.Text(card, height=5,
+                               bg=INPUT_BG, fg=TEXT_DARK,
+                               font=("Helvetica",11),
+                               relief="flat", bd=0,
+                               highlightthickness=1,
+                               highlightbackground=BORDER,
+                               highlightcolor=VIOLET,
+                               wrap="word")
+        self._reason.pack(fill="x", padx=20, pady=(4,8))
 
-        yr_col = tk.Frame(row4, bg=WHITE)
-        yr_col.pack(side="left", fill="x", expand=True)
-        self._flabel(yr_col, "Year Level *")
-        self._vars["year_level"] = tk.StringVar(value="Select year level")
-        self._dropdown_widget(yr_col, self._vars["year_level"], YEAR_LEVELS)
+        # Warning box
+        warn = tk.Frame(card, bg="#FFF3CD",
+                        highlightbackground="#FFA500", highlightthickness=1)
+        warn.pack(fill="x", padx=20, pady=(4,12))
+        tk.Label(warn,
+                 text=("⚠ Important Reminders\n"
+                       "• Double-check all information before submitting\n"
+                       "• Ensure your GWA is accurate\n"
+                       "• Your renewal will be reviewed by the admin\n"
+                       "• You will be notified of the decision"),
+                 bg="#FFF3CD", fg="#856404",
+                 font=("Helvetica",9),
+                 justify="left", padx=10, pady=8, anchor="w").pack(fill="x")
 
-        row5 = tk.Frame(card, bg=WHITE)
-        row5.pack(fill="x")
-        self._field_col(row5, "Current GWA *", "gwa", side="left",
-                        placeholder="e.g. 1.75")
-        tk.Frame(row5, bg=WHITE, width=16).pack(side="left")
+        self._err_var = tk.StringVar()
+        tk.Label(card, textvariable=self._err_var,
+                 bg=WHITE, fg=RED,
+                 font=("Helvetica",10),
+                 wraplength=600).pack(fill="x",padx=20)
 
-        ya_col = tk.Frame(row5, bg=WHITE)
-        ya_col.pack(side="left", fill="x", expand=True)
-        self._flabel(ya_col, "Year of Renewal *")
-        self._vars["year_applied"] = tk.StringVar(value=str(CURRENT_YEAR))
-        self._dropdown_widget(ya_col, self._vars["year_applied"], YEAR_OPTIONS)
+        self._submit_btn = tk.Button(
+            card, text="🔄 Submit Renewal",
+            bg=VIOLET, fg=WHITE,
+            activebackground=PURPLE2,
+            relief="flat", bd=0,
+            font=("Helvetica",12,"bold"),
+            height=2, cursor="hand2",
+            command=self._submit)
+        self._submit_btn.pack(fill="x", padx=20, pady=(10,20))
 
-        # ── Section: Documents ─────────────────────────────────────────────────
-        self._section(card, "📎  Upload Documents")
-
-        tk.Label(card, text="Accepted formats: JPG, PNG, PDF  •  Max 5MB each",
-                 bg=WHITE, fg=GRAY,
-                 font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 8))
-
-        docs = [
-            ("school_id",  "School ID",                         "🪪"),
-            ("id_picture", "ID Picture",                        "🖼️"),
-            ("birth_cert", "Birth Certificate",                 "📄"),
-            ("grades",     "Grades",                            "📊"),
-            ("cor",        "Certificate of Registration (COR)", "📋"),
-        ]
-        for key, label, icon in docs:
-            self._doc_upload_row(card, key, label, icon)
-
-        # ── Remarks ────────────────────────────────────────────────────────────
-        self._section(card, "📝  Remarks")
-
-        self._flabel(card, "Additional Notes (optional)")
-        remarks_wrap = tk.Frame(card, bg=WHITE, highlightthickness=1,
-                                highlightbackground=BORDER,
-                                highlightcolor=PURPLE)
-        remarks_wrap.pack(fill="x", pady=(0, 4))
-        self.remarks_text = tk.Text(remarks_wrap, height=4,
-                                    bg=INPUT_BG, fg=DARK,
-                                    font=("Segoe UI", 11),
-                                    relief="flat", bd=0,
-                                    insertbackground=PURPLE,
-                                    wrap="word")
-        self.remarks_text.pack(fill="x", padx=12, pady=10)
-        self.remarks_text.bind("<FocusIn>",
-            lambda e: remarks_wrap.config(highlightbackground=PURPLE))
-        self.remarks_text.bind("<FocusOut>",
-            lambda e: remarks_wrap.config(highlightbackground=BORDER))
-
-        # ── Message ────────────────────────────────────────────────────────────
-        self.msg_var = tk.StringVar()
-        self.msg_label = tk.Label(card, textvariable=self.msg_var,
-                                  bg=WHITE, fg=RED,
-                                  font=("Segoe UI", 9),
-                                  wraplength=600, justify="left")
-        self.msg_label.pack(fill="x", pady=(8, 0))
-
-        # ── Divider ────────────────────────────────────────────────────────────
-        div = tk.Frame(card, bg=WHITE)
-        div.pack(fill="x", pady=(16, 16))
-        tk.Frame(div, bg=BORDER, height=1).place(relx=0, rely=0.5,
-                                                  relwidth=0.38, anchor="w")
-        tk.Label(div, text="  Submit Renewal  ",
-                 bg=WHITE, fg=GRAY,
-                 font=("Segoe UI", 9)).pack()
-        tk.Frame(div, bg=BORDER, height=1).place(relx=1, rely=0.5,
-                                                  relwidth=0.38, anchor="e")
-
-        # ── Submit button ──────────────────────────────────────────────────────
-        self.submit_btn = tk.Button(card, text="Submit Renewal →",
-                                    bg=PURPLE, fg=WHITE,
-                                    activebackground=PURPLE2,
-                                    activeforeground=WHITE,
-                                    relief="flat", bd=0,
-                                    font=("Segoe UI", 12, "bold"),
-                                    cursor="hand2",
-                                    command=self._submit)
-        self.submit_btn.pack(fill="x", ipady=11)
-        self.submit_btn.bind("<Enter>",
-            lambda e: self.submit_btn.config(bg=PURPLE2))
-        self.submit_btn.bind("<Leave>",
-            lambda e: self.submit_btn.config(
-                bg="#A0AEC0" if self.submit_btn["state"] == "disabled"
-                else PURPLE))
-
-    # ── Widget helpers ─────────────────────────────────────────────────────────
+    # ── Helpers ────────────────────────────────────────────────────────────────
     def _section(self, parent, text):
-        tk.Frame(parent, bg=DIVIDER, height=1).pack(fill="x", pady=(20, 0))
-        tk.Label(parent, text=text, bg=WHITE, fg=PURPLE,
-                 font=("Segoe UI", 12, "bold"),
-                 anchor="w").pack(fill="x", pady=(10, 4))
+        tk.Label(parent, text=text, bg=WHITE, fg=VIOLET,
+                 font=("Helvetica",12,"bold"),
+                 anchor="w", padx=20, pady=(12,0)).pack(fill="x")
 
-    def _flabel(self, parent, text):
-        tk.Label(parent, text=text, bg=WHITE, fg=DARK,
-                 font=("Segoe UI", 10, "bold"),
-                 anchor="w").pack(fill="x", pady=(10, 4))
-
-    def _input(self, parent, key):
-        wrap = tk.Frame(parent, bg=WHITE, highlightthickness=1,
-                        highlightbackground=BORDER, highlightcolor=PURPLE)
-        wrap.pack(fill="x", pady=(0, 4))
-        self._vars[key] = tk.StringVar()
-        e = tk.Entry(wrap, textvariable=self._vars[key],
-                     bg=INPUT_BG, fg=DARK,
-                     insertbackground=PURPLE,
+    def _field(self, parent, key, label, disabled=False, required=True):
+        tk.Label(parent, text=label, bg=WHITE, fg=TEXT_DARK,
+                 font=("Helvetica",10), anchor="w",
+                 padx=20).pack(fill="x",pady=(8,2))
+        var = tk.StringVar()
+        self._vars[key] = var
+        state = "disabled" if disabled else "normal"
+        bg    = DISABLED   if disabled else INPUT_BG
+        e = tk.Entry(parent, textvariable=var, state=state,
+                     bg=bg, fg=TEXT_DARK,
+                     disabledbackground=DISABLED,
+                     disabledforeground="#A0AEC0",
+                     insertbackground=VIOLET,
                      relief="flat", bd=0,
-                     font=("Segoe UI", 11))
-        e.pack(fill="x", ipady=10, padx=12)
-        e.bind("<FocusIn>",
-               lambda ev, w=wrap: w.config(highlightbackground=PURPLE))
-        e.bind("<FocusOut>",
-               lambda ev, w=wrap: w.config(highlightbackground=BORDER))
+                     font=("Helvetica",11),
+                     highlightthickness=1,
+                     highlightbackground=BORDER,
+                     highlightcolor=VIOLET)
+        e.pack(fill="x", padx=20, ipady=7, pady=(0,2))
         return e
 
-    def _field_col(self, parent, label, key, side="left", placeholder=""):
-        col = tk.Frame(parent, bg=WHITE)
-        col.pack(side=side, fill="x", expand=True)
-        self._flabel(col, label)
-        wrap = tk.Frame(col, bg=WHITE, highlightthickness=1,
-                        highlightbackground=BORDER, highlightcolor=PURPLE)
-        wrap.pack(fill="x", pady=(0, 4))
-        self._vars[key] = tk.StringVar()
-        e = tk.Entry(wrap, textvariable=self._vars[key],
-                     bg=INPUT_BG, fg=DARK,
-                     insertbackground=PURPLE,
-                     relief="flat", bd=0,
-                     font=("Segoe UI", 11))
-        e.pack(fill="x", ipady=10, padx=12)
-        e.bind("<FocusIn>",
-               lambda ev, w=wrap: w.config(highlightbackground=PURPLE))
-        e.bind("<FocusOut>",
-               lambda ev, w=wrap: w.config(highlightbackground=BORDER))
-        return e
-
-    def _dropdown_widget(self, parent, var, options):
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure("App.TCombobox",
-                        fieldbackground=INPUT_BG,
-                        background=INPUT_BG,
-                        foreground=DARK,
-                        bordercolor=BORDER,
-                        arrowcolor=PURPLE,
-                        padding=(10, 8))
-        style.map("App.TCombobox",
-                  fieldbackground=[("readonly", INPUT_BG)],
-                  bordercolor=[("focus", PURPLE)])
+    def _dropdown(self, parent, key, label, options):
+        tk.Label(parent, text=label, bg=WHITE, fg=TEXT_DARK,
+                 font=("Helvetica",10), anchor="w",
+                 padx=20).pack(fill="x",pady=(8,2))
+        var = tk.StringVar()
+        self._vars[key] = var
         cb = ttk.Combobox(parent, textvariable=var,
                           values=options, state="readonly",
-                          style="App.TCombobox",
-                          font=("Segoe UI", 11))
-        cb.pack(fill="x", pady=(0, 4), ipady=2)
-        return cb
+                          font=("Helvetica",11))
+        cb.pack(fill="x", padx=20, pady=(0,2))
 
-    def _dropdown_col(self, parent, label, key, options, side="left"):
-        col = tk.Frame(parent, bg=WHITE)
-        col.pack(side=side, fill="x", expand=True)
-        self._flabel(col, label)
-        self._vars[key] = tk.StringVar(
-            value=f"Select {label.rstrip(' *').lower()}")
-        self._dropdown_widget(col, self._vars[key], options)
+    def _doc_upload(self, parent, key, label):
+        row = tk.Frame(parent, bg=WHITE)
+        row.pack(fill="x", padx=20, pady=4)
+        tk.Label(row, text=label, bg=WHITE, fg=TEXT_DARK,
+                 font=("Helvetica",10,"bold"), anchor="w").pack(anchor="w")
+        btn_row = tk.Frame(row, bg=WHITE)
+        btn_row.pack(fill="x", pady=(4,0))
+        tk.Button(btn_row, text="📁 Choose File",
+                  bg=INPUT_BG, fg=VIOLET,
+                  relief="flat", bd=1,
+                  font=("Helvetica",10), cursor="hand2",
+                  command=lambda k=key: self._pick_file(k)).pack(side="left")
+        lbl = tk.Label(btn_row, text="No file chosen",
+                       bg=WHITE, fg=TEXT_GRAY, font=("Helvetica",9))
+        lbl.pack(side="left", padx=8)
+        self._file_labels[key] = lbl
 
-    def _doc_upload_row(self, parent, key, label, icon):
-        row = tk.Frame(parent, bg=WHITE, highlightthickness=1,
-                       highlightbackground=BORDER)
-        row.pack(fill="x", pady=(0, 8))
-
-        left = tk.Frame(row, bg=WHITE)
-        left.pack(side="left", fill="y", padx=(12, 0), pady=10)
-        tk.Label(left, text=icon, bg=WHITE,
-                 font=("Segoe UI", 16)).pack(side="left", padx=(0, 8))
-        info = tk.Frame(left, bg=WHITE)
-        info.pack(side="left")
-        tk.Label(info, text=label, bg=WHITE, fg=DARK,
-                 font=("Segoe UI", 10, "bold"),
-                 anchor="w").pack(anchor="w")
-        name_lbl = tk.Label(info, text="No file chosen",
-                            bg=WHITE, fg=GRAY,
-                            font=("Segoe UI", 9), anchor="w")
-        name_lbl.pack(anchor="w")
-
-        right = tk.Frame(row, bg=WHITE)
-        right.pack(side="right", padx=12, pady=10)
-
-        clear_btn = tk.Button(right, text="✕",
-                              bg=WHITE, fg=RED,
-                              relief="flat", bd=0,
-                              font=("Segoe UI", 10, "bold"),
-                              cursor="hand2")
-        clear_btn.pack(side="right", padx=(6, 0))
-
-        browse_btn = tk.Button(right, text="Browse",
-                               bg=PURPLE, fg=WHITE,
-                               activebackground=PURPLE2,
-                               activeforeground=WHITE,
-                               relief="flat", bd=0,
-                               font=("Segoe UI", 9, "bold"),
-                               cursor="hand2",
-                               padx=14, pady=4)
-        browse_btn.pack(side="right")
-        browse_btn.bind("<Enter>", lambda e: browse_btn.config(bg=PURPLE2))
-        browse_btn.bind("<Leave>", lambda e: browse_btn.config(bg=PURPLE))
-
-        def _browse(k=key, lbl=name_lbl, r=row):
-            path = filedialog.askopenfilename(
-                title=f"Select {label}",
-                filetypes=[("Images & PDF", "*.jpg *.jpeg *.png *.pdf"),
-                           ("All files", "*.*")])
-            if path:
-                self._doc_paths[k] = path
-                fname = os.path.basename(path)
-                display = fname if len(fname) <= 40 else fname[:37] + "…"
-                lbl.config(text=display, fg=PURPLE)
-                r.config(highlightbackground=GREEN)
-
-        def _clear(k=key, lbl=name_lbl, r=row):
-            self._doc_paths.pop(k, None)
-            lbl.config(text="No file chosen", fg=GRAY)
-            r.config(highlightbackground=BORDER)
-
-        browse_btn.config(command=_browse)
-        clear_btn.config(command=_clear)
-        self._doc_rows[key] = (row, name_lbl)
-
-    # ── Pre-fill from approved application ────────────────────────────────────
-    def _prefill(self):
+    # ── Data loading ───────────────────────────────────────────────────────────
+    def _load_data(self):
         try:
-            from db import fetch_one
-            uid = self.user.get("user_id") or self.user.get("id")
+            user = (supabase.table("users")
+                    .select("user_id,first_name,middle_name,last_name")
+                    .eq("email",self.email).single().execute())
+            d    = user.data
+            uid  = d["user_id"]
 
-            # Check for pending renewal first
-            pending = fetch_one(
-                "SELECT renewal_id FROM renewals "
-                "WHERE user_id = %s AND status = 'pending'", (uid,))
-            if pending:
-                self.after(0, self._lock_form,
-                           "⏳ You already have a pending renewal request. "
-                           "Please wait for it to be reviewed.")
-                return
+            app = (supabase.table("application")
+                   .select("*")
+                   .eq("user_id",uid).eq("status","approved")
+                   .maybe_single().execute())
 
-            # Load approved application to pre-fill fields
-            app = fetch_one(
-                """SELECT first_name, middle_name, last_name,
-                          student_id, contact_number,
-                          municipality, barangay,
-                          school_name, course, year_level, gwa
-                   FROM applications
-                   WHERE user_id = %s AND status = 'approved'
-                   LIMIT 1""", (uid,))
+            def _fill():
+                self._vars["firstName"].set(d.get("first_name",""))
+                self._vars["middleName"].set(d.get("middle_name",""))
+                self._vars["surname"].set(d.get("last_name",""))
+                if app.data:
+                    self._vars["houseStreet"].set(app.data.get("address",""))
+                    self._vars["barangay"].set(app.data.get("baranggay",""))
+            self.after(0, _fill)
+        except Exception:
+            pass
 
-            if not app:
-                self.after(0, self._lock_form,
-                           "⚠️ No approved scholarship found. "
-                           "You need an approved application before renewing.")
-                return
-
-            self._app_id = fetch_one(
-                "SELECT application_id FROM applications "
-                "WHERE user_id = %s AND status = 'approved' LIMIT 1",
-                (uid,))
-
-            self.after(0, self._fill_fields, app)
-
-        except Exception as exc:
-            self.after(0, self._show_msg, f"Error loading data: {exc}")
-
-    def _fill_fields(self, app: dict):
-        mapping = {
-            "first_name":     "first_name",
-            "middle_name":    "middle_name",
-            "last_name":      "last_name",
-            "student_id":     "student_id",
-            "contact_number": "contact_number",
-            "school_name":    "school_name",
-            "course":         "course",
-            "gwa":            "gwa",
-        }
-        for app_key, var_key in mapping.items():
-            val = app.get(app_key, "")
-            if var_key in self._vars and val:
-                self._vars[var_key].set(str(val))
-
-        # Dropdowns
-        if app.get("municipality") and app["municipality"] in MUNICIPALITIES:
-            self._vars["municipality"].set(app["municipality"])
-        if app.get("barangay") and app["barangay"] in BARANGAYS:
-            self._vars["barangay"].set(app["barangay"])
-        if app.get("year_level") and app["year_level"] in YEAR_LEVELS:
-            self._vars["year_level"].set(app["year_level"])
+    def _pick_file(self, key):
+        path = filedialog.askopenfilename(
+            filetypes=[("Images & PDF","*.jpg *.jpeg *.png *.pdf")])
+        if path:
+            self._files[key] = path
+            self._file_labels[key].config(
+                text=os.path.basename(path), fg="#2D3748")
 
     # ── Submit ─────────────────────────────────────────────────────────────────
     def _submit(self):
-        self.msg_var.set("")
+        self._err_var.set("")
+        errors = []
+        for key in ("studentId","contact","houseStreet","course","gwa"):
+            if not self._vars.get(key, tk.StringVar()).get().strip():
+                errors.append(f"'{key}' is required.")
+        if not self._vars.get("yearLevel","").get():
+            errors.append("Please select your year level.")
+        reason = self._reason.get("1.0","end").strip()
+        if not reason or len(reason) < 50:
+            errors.append("Reason must be at least 50 characters.")
+        for k, lbl in [("school_id","School ID"),("id_picture","ID Picture"),
+                        ("birth_cert","Birth Certificate"),
+                        ("grades","Grades"),("cor","COR")]:
+            if not self._files[k]:
+                errors.append(f"Please upload {lbl}.")
+        if errors:
+            return self._err_var.set(errors[0])
 
-        first   = self._vars["first_name"].get().strip()
-        middle  = self._vars["middle_name"].get().strip()
-        last    = self._vars["last_name"].get().strip()
-        sid     = self._vars["student_id"].get().strip()
-        contact = self._vars["contact_number"].get().strip()
-        muni    = self._vars["municipality"].get().strip()
-        brgy    = self._vars["barangay"].get().strip()
-        school  = self._vars["school_name"].get().strip()
-        course  = self._vars["course"].get().strip()
-        yr_lvl  = self._vars["year_level"].get().strip()
-        gwa     = self._vars["gwa"].get().strip()
-        yr_app  = self._vars["year_applied"].get().strip()
-        remarks = self.remarks_text.get("1.0", "end").strip()
-
-        if not first:
-            return self._show_msg("Please enter your first name.")
-        if not last:
-            return self._show_msg("Please enter your last name.")
-        if not sid:
-            return self._show_msg("Please enter your student ID.")
-        if not contact:
-            return self._show_msg("Please enter your contact number.")
-        if muni.startswith("Select"):
-            return self._show_msg("Please select a municipality.")
-        if brgy.startswith("Select"):
-            return self._show_msg("Please select a barangay.")
-        if not school:
-            return self._show_msg("Please enter your school name.")
-        if not course:
-            return self._show_msg("Please enter your course/program.")
-        if yr_lvl.startswith("Select"):
-            return self._show_msg("Please select your year level.")
-        if not gwa:
-            return self._show_msg("Please enter your GWA.")
-        try:
-            gwa_val = float(gwa)
-            if not (1.0 <= gwa_val <= 5.0):
-                raise ValueError
-        except ValueError:
-            return self._show_msg("GWA must be a number between 1.0 and 5.0.")
-
-        doc_labels = {
-            "school_id":  "School ID",
-            "id_picture": "ID Picture",
-            "birth_cert": "Birth Certificate",
-            "grades":     "Grades",
-            "cor":        "Certificate of Registration (COR)",
-        }
-        for key, lbl in doc_labels.items():
-            path = self._doc_paths.get(key, "")
-            if not path:
-                return self._show_msg(f"Please upload your {lbl}.")
-            if not os.path.isfile(path):
-                return self._show_msg(
-                    f"{lbl}: file no longer found. Please re-upload.")
-            if os.path.getsize(path) > 5 * 1024 * 1024:
-                return self._show_msg(f"{lbl} exceeds the 5MB limit.")
-
-        self._set_loading(True)
+        self._submit_btn.config(state="disabled",
+                                text="Submitting…", bg="#A0AEC0")
         threading.Thread(target=self._do_submit,
-                         args=(first, middle, last, sid, contact,
-                               muni, brgy, school, course, yr_lvl,
-                               gwa_val, yr_app, remarks),
-                         daemon=True).start()
+                         args=(reason,), daemon=True).start()
 
-    def _do_submit(self, first, middle, last, sid, contact,
-                   muni, brgy, school, course, yr_lvl,
-                   gwa_val, yr_app, remarks):
+    def _do_submit(self, reason):
         try:
-            from db import execute, fetch_one
-            uid = self.user.get("user_id") or self.user.get("id")
+            user = (supabase.table("users")
+                    .select("user_id")
+                    .eq("email",self.email).single().execute())
+            uid = user.data["user_id"]
 
-            # Re-check for pending renewal
-            pending = fetch_one(
-                "SELECT renewal_id FROM renewals "
-                "WHERE user_id = %s AND status = 'pending'", (uid,))
-            if pending:
-                self.after(0, self._show_msg,
-                           "You already have a pending renewal request.")
-                self.after(0, self._set_loading, False)
-                return
+            file_urls = {}
+            cols = {"school_id":"school_id_path","id_picture":"id_picture_path",
+                    "birth_cert":"birth_certificate_path",
+                    "grades":"grades_path","cor":"cor_path"}
+            for key, path in self._files.items():
+                ext = os.path.splitext(path)[1]
+                sp  = f"{uid}/renew_{key}{ext}"
+                with open(path,"rb") as f:
+                    supabase.storage.from_("scholarship_bucket").upload(
+                        sp, f.read(),
+                        {"content-type":"image/jpeg","x-upsert":"true"})
+                url = (supabase.storage.from_("scholarship_bucket")
+                       .get_public_url(sp))
+                file_urls[cols[key]] = url
 
-            app_row = fetch_one(
-                "SELECT application_id FROM applications "
-                "WHERE user_id = %s AND status = 'approved' LIMIT 1", (uid,))
-            if not app_row:
-                self.after(0, self._show_msg,
-                           "No approved application found.")
-                self.after(0, self._set_loading, False)
-                return
-
-            app_id = app_row["application_id"]
-
-            def _read(key):
-                path = self._doc_paths.get(key, "")
-                if path and os.path.isfile(path):
-                    with open(path, "rb") as f:
-                        return f.read()
-                return None
-
-            execute(
-                """INSERT INTO renewals
-                   (user_id, application_id,
-                    first_name, middle_name, last_name,
-                    student_id, contact_number,
-                    municipality, barangay,
-                    school_name, course, year_level,
-                    gwa, year_applied, remarks,
-                    doc_school_id, doc_id_picture, doc_birth_cert,
-                    doc_grades, doc_cor,
-                    status)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                           %s,%s,%s,%s,%s,%s,%s,%s,'pending')""",
-                (uid, app_id,
-                 first, middle or None, last,
-                 sid, contact, muni, brgy,
-                 school, course, yr_lvl,
-                 gwa_val, yr_app, remarks or None,
-                 _read("school_id"), _read("id_picture"), _read("birth_cert"),
-                 _read("grades"),    _read("cor")))
-
-            self.after(0, self._on_success)
-
+            data = {
+                "user_id":      uid,
+                "first_name":   self._vars["firstName"].get().strip(),
+                "middle_name":  self._vars["middleName"].get().strip() or None,
+                "last_name":    self._vars["surname"].get().strip(),
+                "student_id":   self._vars["studentId"].get().strip(),
+                "contact":      self._vars["contact"].get().strip(),
+                "address":      self._vars["houseStreet"].get().strip(),
+                "baranggay":    self._vars["barangay"].get(),
+                "course":       self._vars["course"].get().strip(),
+                "year_level":   self._vars["yearLevel"].get(),
+                "gwa":          float(self._vars["gwa"].get().strip()),
+                "reason":       reason,
+                "status":       "pending",
+                **file_urls,
+            }
+            supabase.table("renew").insert(data).execute()
+            self.after(0, self._on_submitted)
         except Exception as exc:
-            self.after(0, self._show_msg, f"Error: {exc}")
-            self.after(0, self._set_loading, False)
+            self.after(0, self._on_error, str(exc))
 
-    def _on_success(self):
-        self._set_loading(False)
-        self._show_msg("✅ Renewal submitted successfully!", GREEN)
-        # Reset doc rows
-        self._doc_paths.clear()
-        for key, (row, lbl) in self._doc_rows.items():
-            lbl.config(text="No file chosen", fg=GRAY)
-            row.config(highlightbackground=BORDER)
-        self.remarks_text.delete("1.0", "end")
-        # Lock after submit
-        self.after(1500, lambda: self._lock_form(
-            "✅ Renewal submitted! Please wait for the review."))
+    def _on_submitted(self):
+        self._submit_btn.config(state="normal",
+                                text="🔄 Submit Renewal", bg=VIOLET)
+        messagebox.showinfo("Submitted!",
+                            "Your renewal has been submitted successfully!")
+        self.dashboard._show_applications()
 
-    def _lock_form(self, msg: str):
-        self.submit_btn.config(
-            state="disabled",
-            bg="#A0AEC0",
-            text="Renewal Already Submitted")
-        self._show_msg(msg, "#718096")
-
-    def _set_loading(self, loading: bool):
-        self.submit_btn.config(
-            text="Submitting…" if loading else "Submit Renewal →",
-            state="disabled" if loading else "normal",
-            bg="#A0AEC0" if loading else PURPLE)
-
-    def _show_msg(self, msg: str, color: str = RED):
-        self.msg_var.set(msg)
-        self.msg_label.config(fg=color)
+    def _on_error(self, msg):
+        self._submit_btn.config(state="normal",
+                                text="🔄 Submit Renewal", bg=VIOLET)
+        self._err_var.set(f"Error: {msg}")

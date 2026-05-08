@@ -1,210 +1,223 @@
 import tkinter as tk
-import hashlib
+from tkinter import filedialog, messagebox
 import threading
 
-BG        = "#F7FAFC"
-WHITE     = "#FFFFFF"
-PURPLE1   = "#667EEA"
-PURPLE2   = "#764BA2"
-BORDER    = "#E2E8F0"
-TEXT_DARK = "#2D3748"
-TEXT_GRAY = "#718096"
-RED       = "#F56565"
-GREEN     = "#48BB78"
+try:
+    from student_dashboard import supabase, BG, WHITE, PURPLE, PURPLE2, BORDER, TEXT_DARK, TEXT_GRAY
+except ImportError:
+    BG=WHITE=PURPLE=PURPLE2=BORDER=TEXT_DARK=TEXT_GRAY=""
+    supabase = None
+
 INPUT_BG  = "#F7FAFC"
+DISABLED  = "#EDF2F7"
+VIOLET    = "#7E57C2"
+GREEN_TXT = "#48BB78"
+RED       = "#E53E3E"
 
 
-def _hash(p: str) -> str:
-    return hashlib.sha256(p.encode()).hexdigest()
-
-
-class StudentProfilePage(tk.Frame):
-    def __init__(self, parent, user: dict):
+class ProfileFrame(tk.Frame):
+    def __init__(self, parent, name, email, dashboard, **_):
         super().__init__(parent, bg=BG)
-        self.pack(fill="both", expand=True)
-        self.user = user
-        self._build_ui()
+        self.name      = name
+        self.email     = email
+        self.dashboard = dashboard
+        self._editing  = False
+        self._saving   = False
+        self._photo_path = None
+        self._entries  = {}
+        self._build()
 
-    def _build_ui(self):
-        tk.Label(self, text="My Profile",
-                 bg=BG, fg=PURPLE1,
-                 font=("Helvetica", 20, "bold")).pack(anchor="w", padx=32, pady=(32, 4))
-        tk.Label(self, text="View and update your account details.",
-                 bg=BG, fg=TEXT_GRAY,
-                 font=("Helvetica", 11)).pack(anchor="w", padx=32, pady=(0, 12))
-
-        # ── Scrollable area ───────────────────────────────────────────────────
+    # ── Build UI ───────────────────────────────────────────────────────────────
+    def _build(self):
         canvas = tk.Canvas(self, bg=BG, highlightthickness=0)
-        scrollbar = tk.Scrollbar(self, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
+        sb = tk.Scrollbar(self, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        canvas.pack(fill="both", expand=True)
 
         inner = tk.Frame(canvas, bg=BG)
-        win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        wid = canvas.create_window((0,0), window=inner, anchor="nw")
 
-        def _on_resize(e):
-            canvas.itemconfig(win_id, width=e.width)
-        canvas.bind("<Configure>", _on_resize)
-        inner.bind("<Configure>",
-                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        def _resize(e):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.itemconfig(wid, width=e.width)
+        canvas.bind("<Configure>", _resize)
         canvas.bind_all("<MouseWheel>",
-                        lambda e: canvas.yview_scroll(-1 * (e.delta // 120), "units"))
+            lambda e: canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
 
-        # ── Card ──────────────────────────────────────────────────────────────
-        card = tk.Frame(inner, bg=WHITE, bd=0,
-                        highlightbackground=BORDER, highlightthickness=1)
-        card.pack(padx=32, pady=(0, 32), fill="x")
+        # ── Header banner ──────────────────────────────────────────────────────
+        hdr = tk.Frame(inner, bg=VIOLET)
+        hdr.pack(fill="x")
 
-        # Read-only info
-        self._info_row(card, "Email",     self.user.get("email", ""))
-        self._info_row(card, "User Type", self.user.get("user_type", "student").capitalize())
+        # Edit/Cancel toggle
+        self._toggle_btn = tk.Button(
+            hdr, text="✏ Edit",
+            bg=WHITE, fg=VIOLET,
+            relief="flat", bd=0,
+            font=("Helvetica",10,"bold"),
+            padx=12, pady=4, cursor="hand2",
+            command=self._toggle_edit)
+        self._toggle_btn.pack(anchor="ne", padx=16, pady=(12,0))
 
-        tk.Frame(card, bg=BORDER, height=1).pack(fill="x", padx=20, pady=12)
+        # Avatar circle
+        self._avatar_canvas = tk.Canvas(hdr, width=100, height=100,
+                                        bg=VIOLET, highlightthickness=0)
+        self._avatar_canvas.pack(pady=(4,0))
+        self._draw_avatar()
 
-        # Editable name fields
-        self._field_label(card, "First Name")
-        self.first_var = tk.StringVar(value=self.user.get("first_name", ""))
-        self._entry(card, self.first_var)
+        self._photo_btn = tk.Button(
+            hdr, text="📷 Change Photo",
+            bg=VIOLET, fg=WHITE,
+            relief="flat", bd=0,
+            font=("Helvetica",9), cursor="hand2",
+            command=self._pick_photo,
+            state="disabled")
+        self._photo_btn.pack(pady=(4,0))
 
-        self._field_label(card, "Last Name")
-        self.last_var = tk.StringVar(value=self.user.get("last_name", ""))
-        self._entry(card, self.last_var)
+        tk.Label(hdr, text=self.name,
+                 bg=VIOLET, fg=WHITE,
+                 font=("Helvetica",16,"bold")).pack(pady=(8,2))
+        tk.Label(hdr, text="Scholar",
+                 bg=VIOLET, fg="#D1C4E9",
+                 font=("Helvetica",10)).pack(pady=(0,20))
 
-        tk.Frame(card, bg=BORDER, height=1).pack(fill="x", padx=20, pady=12)
+        # ── Form area ──────────────────────────────────────────────────────────
+        body = tk.Frame(inner, bg=BG)
+        body.pack(fill="both", padx=32, pady=20)
 
-        # Password fields with show/hide toggles
-        self._field_label(card, "New Password (leave blank to keep current)")
-        self.pwd_var = tk.StringVar()
-        self.pwd_entry, self._show_pwd = self._pwd_entry(card, self.pwd_var)
+        # Personal Information
+        self._section_label(body,"Personal Information")
+        personal = [
+            ("Full Name",     "name",       self.name,  False),
+            ("Email",         "email",      self.email, False),
+            ("Phone Number",  "phone",      "09171234567", True),
+            ("Address",       "address",    "Los Baños, Laguna", True),
+        ]
+        for label, key, default, editable in personal:
+            self._profile_field(body, label, key, default, editable)
 
-        self._field_label(card, "Confirm New Password")
-        self.confirm_var = tk.StringVar()
-        self.confirm_entry, self._show_confirm = self._pwd_entry(card, self.confirm_var)
+        self._section_label(body,"Academic Information")
+        academic = [
+            ("Student ID", "student_id", "2024-12345",        False),
+            ("Course",     "course",     "BS Computer Science", True),
+        ]
+        for label, key, default, editable in academic:
+            self._profile_field(body, label, key, default, editable)
 
-        # Message label
-        self.msg_var = tk.StringVar()
-        self.msg_label = tk.Label(card, textvariable=self.msg_var,
-                                  bg=WHITE, fg=RED,
-                                  font=("Helvetica", 10), wraplength=500)
-        self.msg_label.pack(fill="x", padx=20, pady=(4, 4))
+        # Scholarship status card
+        self._section_label(body,"Scholarship Status")
+        status_card = tk.Frame(body, bg=WHITE,
+                               highlightbackground=GREEN_TXT,
+                               highlightthickness=1)
+        status_card.pack(fill="x", pady=(4,12))
+        tk.Label(status_card, text="✅  Active Scholar",
+                 bg=WHITE, fg=GREEN_TXT,
+                 font=("Helvetica",13,"bold"),
+                 padx=16, pady=8, anchor="w").pack(fill="x")
+        tk.Label(status_card, text="Mayor's Scholarship Program",
+                 bg=WHITE, fg=TEXT_GRAY,
+                 font=("Helvetica",10),
+                 padx=16, pady=(0,12), anchor="w").pack(fill="x")
 
-        # Save button
-        self.save_btn = tk.Button(card, text="Save Changes",
-                                  bg=PURPLE1, fg=WHITE,
-                                  activebackground=PURPLE2, activeforeground=WHITE,
-                                  relief="flat", bd=0, cursor="hand2",
-                                  font=("Helvetica", 12, "bold"),
-                                  padx=20, pady=8, command=self._on_save)
-        self.save_btn.pack(pady=(4, 20))
+        # Save button (hidden until editing)
+        self._save_btn = tk.Button(
+            body, text="💾 Save Changes",
+            bg=VIOLET, fg=WHITE,
+            activebackground=PURPLE2,
+            relief="flat", bd=0,
+            font=("Helvetica",12,"bold"),
+            height=2, cursor="hand2",
+            command=self._save_profile)
+        # Not packed yet — shown when editing
 
-    # ── Helpers ───────────────────────────────────────────────────────────────
-    def _info_row(self, parent, label: str, value: str):
-        row = tk.Frame(parent, bg=WHITE)
-        row.pack(fill="x", padx=20, pady=(12, 0))
-        tk.Label(row, text=f"{label}:", bg=WHITE, fg=TEXT_GRAY,
-                 font=("Helvetica", 11), width=12, anchor="w").pack(side="left")
-        tk.Label(row, text=value, bg=WHITE, fg=TEXT_DARK,
-                 font=("Helvetica", 11, "bold"), anchor="w").pack(side="left")
+    # ── Helpers ────────────────────────────────────────────────────────────────
+    def _section_label(self, parent, text):
+        tk.Label(parent, text=text,
+                 bg=BG, fg=VIOLET,
+                 font=("Helvetica",13,"bold"),
+                 anchor="w").pack(fill="x", pady=(16,4))
 
-    def _field_label(self, parent, text):
-        tk.Label(parent, text=text, bg=WHITE, fg=TEXT_DARK,
-                 font=("Helvetica", 11, "bold"), anchor="w").pack(
-            fill="x", padx=20, pady=(10, 2))
+    def _profile_field(self, parent, label, key, default, editable):
+        tk.Label(parent, text=label,
+                 bg=BG, fg=TEXT_GRAY,
+                 font=("Helvetica",9), anchor="w").pack(fill="x")
+        var = tk.StringVar(value=default)
+        state = "disabled"  # start read-only
+        bg    = DISABLED
+        e = tk.Entry(parent, textvariable=var, state=state,
+                     bg=bg, fg=TEXT_DARK,
+                     disabledbackground=DISABLED,
+                     disabledforeground=TEXT_DARK,
+                     insertbackground=VIOLET,
+                     relief="flat", bd=0,
+                     font=("Helvetica",12),
+                     highlightthickness=1,
+                     highlightbackground=BORDER,
+                     highlightcolor=VIOLET)
+        e.pack(fill="x", ipady=8, pady=(2,10))
+        self._entries[key] = (e, var, editable)
 
-    def _entry(self, parent, var, show=None):
-        e = tk.Entry(parent, textvariable=var, show=show or "",
-                     bg=INPUT_BG, fg=TEXT_DARK,
-                     font=("Helvetica", 11), relief="flat",
-                     highlightthickness=1, highlightbackground=BORDER,
-                     highlightcolor=PURPLE1)
-        e.pack(fill="x", padx=20, pady=(0, 4), ipady=6)
-        e.bind("<FocusIn>",  lambda ev: e.config(highlightcolor=PURPLE1))
-        e.bind("<FocusOut>", lambda ev: e.config(highlightcolor=BORDER))
-        return e
+    def _draw_avatar(self, path=None):
+        c = self._avatar_canvas
+        c.delete("all")
+        initial = self.name[0].upper() if self.name else "S"
+        if path:
+            try:
+                from PIL import Image, ImageTk
+                img = Image.open(path).resize((96,96))
+                self._photo_img = ImageTk.PhotoImage(img)
+                c.create_oval(2,2,98,98, fill=WHITE, outline=WHITE)
+                c.create_image(50,50, image=self._photo_img)
+                return
+            except ImportError:
+                pass
+        c.create_oval(2,2,98,98, fill=WHITE, outline=WHITE)
+        c.create_text(50,50, text=initial,
+                      fill=VIOLET, font=("Helvetica",36,"bold"))
 
-    def _pwd_entry(self, parent, var):
-        """Password entry with show/hide toggle. Returns (entry, state_list)."""
-        frame = tk.Frame(parent, bg=WHITE)
-        frame.pack(fill="x", padx=20, pady=(0, 4))
+    def _pick_photo(self):
+        path = filedialog.askopenfilename(
+            filetypes=[("Images","*.jpg *.jpeg *.png")])
+        if path:
+            self._photo_path = path
+            self._draw_avatar(path)
 
-        entry = tk.Entry(frame, textvariable=var, show="•",
-                         bg=INPUT_BG, fg=TEXT_DARK,
-                         font=("Helvetica", 11), relief="flat",
-                         highlightthickness=1, highlightbackground=BORDER,
-                         highlightcolor=PURPLE1)
-        entry.pack(side="left", fill="x", expand=True, ipady=6)
-        entry.bind("<FocusIn>",  lambda ev: entry.config(highlightcolor=PURPLE1))
-        entry.bind("<FocusOut>", lambda ev: entry.config(highlightcolor=BORDER))
+    # ── Edit toggle ────────────────────────────────────────────────────────────
+    def _toggle_edit(self):
+        self._editing = not self._editing
+        self._toggle_btn.config(
+            text="✕ Cancel" if self._editing else "✏ Edit")
+        self._photo_btn.config(
+            state="normal" if self._editing else "disabled")
 
-        visible = [False]
+        for key, (entry, var, editable) in self._entries.items():
+            if editable:
+                if self._editing:
+                    entry.config(state="normal", bg=INPUT_BG)
+                else:
+                    entry.config(state="disabled", bg=DISABLED)
 
-        def _toggle():
-            visible[0] = not visible[0]
-            entry.config(show="" if visible[0] else "•")
-            btn.config(text="🙈" if visible[0] else "👁")
+        if self._editing:
+            self._save_btn.pack(fill="x", pady=(8,20))
+        else:
+            self._save_btn.pack_forget()
 
-        btn = tk.Button(frame, text="👁", bg=INPUT_BG, fg=TEXT_GRAY,
-                        relief="flat", bd=0, cursor="hand2",
-                        font=("Helvetica", 11), command=_toggle)
-        btn.pack(side="right", padx=(4, 0))
+    # ── Save ───────────────────────────────────────────────────────────────────
+    def _save_profile(self):
+        if self._saving:
+            return
+        self._saving = True
+        self._save_btn.config(state="disabled", text="Saving…", bg="#A0AEC0")
+        threading.Thread(target=self._do_save, daemon=True).start()
 
-        return entry, visible
+    def _do_save(self):
+        import time
+        time.sleep(0.8)  # simulate API call
+        self.after(0, self._on_saved)
 
-    # ── Save ──────────────────────────────────────────────────────────────────
-    def _on_save(self):
-        self._show_msg("")
-        first   = self.first_var.get().strip()
-        last    = self.last_var.get().strip()
-        pwd     = self.pwd_var.get().strip()
-        confirm = self.confirm_var.get().strip()
-
-        if not first:
-            return self._show_msg("First name cannot be empty.")
-        if not last:
-            return self._show_msg("Last name cannot be empty.")
-        if pwd and len(pwd) < 6:
-            return self._show_msg("Password must be at least 6 characters.")
-        if pwd != confirm:
-            return self._show_msg("Passwords do not match.")
-        if not self.user.get("id"):
-            return self._show_msg("User ID not found. Please log in again.")
-
-        self._set_loading(True)
-        threading.Thread(target=self._do_save,
-                         args=(first, last, pwd), daemon=True).start()
-
-    def _do_save(self, first: str, last: str, pwd: str):
-        try:
-            from db import execute
-            if pwd:
-                execute(
-                    "UPDATE users SET first_name=%s, last_name=%s, name=%s, password=%s WHERE id=%s",
-                    (first, last, f"{first} {last}", _hash(pwd), self.user["id"]))
-            else:
-                execute(
-                    "UPDATE users SET first_name=%s, last_name=%s, name=%s WHERE id=%s",
-                    (first, last, f"{first} {last}", self.user["id"]))
-
-            self.user["first_name"] = first
-            self.user["last_name"]  = last
-            self.user["name"]       = f"{first} {last}"
-
-            self.after(0, self._set_loading, False)
-            self.after(0, self.pwd_var.set, "")
-            self.after(0, self.confirm_var.set, "")
-            self.after(0, self._show_msg, "Profile updated successfully!", GREEN)
-
-        except Exception as exc:
-            self.after(0, self._set_loading, False)
-            self.after(0, self._show_msg, f"Error: {exc}")
-
-    def _set_loading(self, loading: bool):
-        self.save_btn.config(
-            text="Saving…" if loading else "Save Changes",
-            state="disabled" if loading else "normal",
-            bg="#A0AEC0" if loading else PURPLE1)
-
-    def _show_msg(self, msg: str, color: str = RED):
-        self.msg_var.set(msg)
-        self.msg_label.config(fg=color)
+    def _on_saved(self):
+        self._saving = False
+        self._save_btn.config(state="normal",
+                              text="💾 Save Changes", bg=VIOLET)
+        self._toggle_edit()  # exit edit mode
+        messagebox.showinfo("Saved","Profile updated successfully!")

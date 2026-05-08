@@ -1,242 +1,206 @@
 import tkinter as tk
-
-BG         = "#F7FAFC"
-WHITE      = "#FFFFFF"
-PURPLE     = "#667EEA"
-PURPLE2    = "#764BA2"
-SIDEBAR_BG = "#2D3748"
-SIDEBAR_H  = "#3D4F63"
-TEXT_DARK  = "#2D3748"
-TEXT_LIGHT = "#EDF2F7"
-TEXT_GRAY  = "#718096"
-BORDER     = "#E2E8F0"
-RED        = "#F56565"
-SHADOW     = "#CBD5E0"
-DIVIDER    = "#4A5568"
+from tkinter import messagebox
+import threading
+from home_frame import HomeFrame   # ← import only, do NOT redefine below
 
 
-class StudentDashboard(tk.Frame):
-    def __init__(self, parent, name: str, email: str, app):
-        super().__init__(parent, bg=BG)
-        self.app   = app
+# ── Palette ────────────────────────────────────────────────────────────────────
+BG        = "#F7FAFC"
+WHITE     = "#FFFFFF"
+PURPLE    = "#667EEA"
+PURPLE2   = "#764BA2"
+BORDER    = "#E2E8F0"
+TEXT_DARK = "#2D3748"
+TEXT_GRAY = "#718096"
+SIDEBAR   = "#2D3748"
+SIDEBAR_H = "#4A5568"
+
+
+class StudentDashboard(tk.Tk):
+    def __init__(self, name: str, email: str = "student@example.com"):
+        super().__init__()
         self.name  = name
         self.email = email
-        self.user  = {"name": name, "email": email, "user_type": "student"}
-        self._load_user()
-        self._build_ui()
+        self.title("Majayjay Scholars")
+        self.geometry("1100x700")
+        self.minsize(800, 560)
+        self.configure(bg=BG)
+        self._center()
+        self._current_frame = None
+        self._build()
+        self._show_home()
 
-    def _load_user(self):
-        try:
-            from db import fetch_one
-            row = fetch_one("SELECT * FROM users WHERE email = %s", (self.email,))
-            if row:
-                self.user = row
-        except Exception:
-            pass
+    def _center(self):
+        self.update_idletasks()
+        w, h = 1100, 700
+        x = (self.winfo_screenwidth()  - w) // 2
+        y = (self.winfo_screenheight() - h) // 2
+        self.geometry(f"{w}x{h}+{x}+{y}")
 
-    def _build_ui(self):
-        # ── Sidebar ───────────────────────────────────────────────────────────
-        sidebar = tk.Frame(self, bg=SIDEBAR_BG, width=230)
-        sidebar.pack(side="left", fill="y")
-        sidebar.pack_propagate(False)
+    # ── Layout ─────────────────────────────────────────────────────────────────
+    def _build(self):
+        # Sidebar
+        self.sidebar = tk.Frame(self, bg=SIDEBAR, width=210)
+        self.sidebar.pack(side="left", fill="y")
+        self.sidebar.pack_propagate(False)
+        self._build_sidebar()
 
-        # Gradient header in sidebar
-        hdr = tk.Canvas(sidebar, height=160, bg=SIDEBAR_BG,
-                        highlightthickness=0)
-        hdr.pack(fill="x")
-        hdr.bind("<Configure>", lambda e: self._draw_sidebar_header(hdr))
-        self._sidebar_hdr = hdr
-
-        tk.Frame(sidebar, bg=DIVIDER, height=1).pack(fill="x", padx=16)
-
-        # Nav items
-        nav_items = [
-            ("🏠   Home",               self._show_home),
-            ("📋   Apply Scholarship",  self._open_apply),
-            ("📁   My Applications",    self._open_applications),
-            ("🔄   Renewal",            self._open_renewal),
-            ("👤   My Profile",         self._open_profile),
-        ]
-        self._nav_buttons = []
-        nav_frame = tk.Frame(sidebar, bg=SIDEBAR_BG)
-        nav_frame.pack(fill="x", pady=(8, 0))
-
-        for label, cmd in nav_items:
-            btn = tk.Button(nav_frame, text=label, anchor="w",
-                            bg=SIDEBAR_BG, fg=TEXT_LIGHT,
-                            activebackground=PURPLE, activeforeground=WHITE,
-                            relief="flat", bd=0, cursor="hand2",
-                            font=("Segoe UI", 11), padx=20, pady=8)
-            btn.pack(fill="x", padx=8, pady=1)
-            btn.bind("<Enter>", lambda e, b=btn: b.config(bg=SIDEBAR_H)
-                     if b["bg"] != PURPLE else None)
-            btn.bind("<Leave>", lambda e, b=btn: b.config(bg=SIDEBAR_BG)
-                     if b["bg"] == SIDEBAR_H else None)
-            self._nav_buttons.append(btn)
-            btn.config(command=lambda c=cmd, b=btn: self._nav(c, b))
-
-        tk.Frame(sidebar, bg=DIVIDER, height=1).pack(fill="x", padx=16, pady=(12, 4))
-
-        # Logout
-        logout_btn = tk.Button(sidebar, text="🚪   Log Out", anchor="w",
-                               bg=SIDEBAR_BG, fg=RED,
-                               activebackground="#742A2A", activeforeground=WHITE,
-                               relief="flat", bd=0, cursor="hand2",
-                               font=("Segoe UI", 11), padx=20, pady=8,
-                               command=self._logout)
-        logout_btn.pack(fill="x", padx=8, pady=1)
-        logout_btn.bind("<Enter>", lambda e: logout_btn.config(bg="#742A2A", fg=WHITE))
-        logout_btn.bind("<Leave>", lambda e: logout_btn.config(bg=SIDEBAR_BG, fg=RED))
-
-        # ── Content area ──────────────────────────────────────────────────────
+        # Content area
         self.content = tk.Frame(self, bg=BG)
         self.content.pack(side="left", fill="both", expand=True)
 
-        self._nav(self._show_home, self._nav_buttons[0])
+    def _build_sidebar(self):
+        s = self.sidebar
 
-    # ── Sidebar gradient header ────────────────────────────────────────────────
-    def _draw_sidebar_header(self, c):
-        c.delete("all")
-        w = c.winfo_width()
-        h = c.winfo_height()
-        steps = 40
-        for i in range(steps):
-            r1, g1, b1 = 0x66, 0x7E, 0xEA
-            r2, g2, b2 = 0x76, 0x4B, 0xA2
-            t = i / steps
-            r = int(r1 + (r2 - r1) * t)
-            g = int(g1 + (g2 - g1) * t)
-            b = int(b1 + (b2 - b1) * t)
-            c.create_rectangle(0, i * h // steps,
-                                w, (i + 1) * h // steps,
-                                fill=f"#{r:02x}{g:02x}{b:02x}", outline="")
-        # Logo circle
-        cx, cy, r = w // 2, 54, 30
-        c.create_oval(cx - r, cy - r, cx + r, cy + r,
-                      fill=WHITE, outline="")
-        c.create_text(cx, cy, text="MJS",
-                      fill=PURPLE, font=("Segoe UI", 14, "bold"))
-        # Name & email
-        display = self.name if self.name else "Student"
-        c.create_text(cx, cy + r + 16, text=display,
-                      fill=WHITE, font=("Segoe UI", 11, "bold"))
-        c.create_text(cx, cy + r + 32, text=self.email,
-                      fill="#D6BCFA", font=("Segoe UI", 8))
+        # Avatar circle
+        avatar = tk.Canvas(s, width=72, height=72, bg=SIDEBAR,
+                           highlightthickness=0)
+        avatar.pack(pady=(28, 6))
+        avatar.create_oval(4, 4, 68, 68, fill=PURPLE, outline=PURPLE2, width=2)
+        initials = "".join(w[0].upper() for w in self.name.split()[:2])
+        avatar.create_text(36, 36, text=initials, fill=WHITE,
+                           font=("Segoe UI", 16, "bold"))
 
-    # ── Navigation ────────────────────────────────────────────────────────────
-    def _nav(self, page_fn, btn):
-        for b in self._nav_buttons:
-            b.config(bg=SIDEBAR_BG, fg=TEXT_LIGHT)
-        if btn:
-            btn.config(bg=PURPLE, fg=WHITE)
-        page_fn()
+        tk.Label(s, text=self.name,
+                 bg=SIDEBAR, fg=WHITE,
+                 font=("Segoe UI", 11, "bold"),
+                 wraplength=180, justify="center").pack()
+        tk.Label(s, text=self.email,
+                 bg=SIDEBAR, fg="#A0AEC0",
+                 font=("Segoe UI", 8),
+                 wraplength=180, justify="center").pack(pady=(2, 18))
 
-    def _clear_content(self):
-        for w in self.content.winfo_children():
-            w.destroy()
+        tk.Frame(s, bg="#4A5568", height=1).pack(fill="x", padx=16, pady=4)
 
-    # ── Pages ─────────────────────────────────────────────────────────────────
+        nav_items = [
+            ("🏠", "Home",              self._show_home),
+            ("📝", "Apply Scholarship", self._show_apply),
+            ("📋", "My Applications",   self._show_applications),
+            ("🔄", "Renewal",           self._show_renew),
+            ("👤", "My Profile",        self._show_profile),
+        ]
+
+        self._nav_btns = {}
+        for icon, label, cmd in nav_items:
+            btn = tk.Button(s, text=f"  {icon}  {label}", anchor="w",
+                            bg=SIDEBAR, fg=WHITE,
+                            activebackground=SIDEBAR_H,
+                            activeforeground=WHITE,
+                            relief="flat", bd=0,
+                            font=("Segoe UI", 10),
+                            padx=12, pady=11,
+                            cursor="hand2",
+                            command=cmd)
+            btn.pack(fill="x")
+            self._nav_btns[label] = btn
+
+        # Spacer + Logout
+        tk.Frame(s, bg=SIDEBAR).pack(fill="both", expand=True)
+        tk.Frame(s, bg="#4A5568", height=1).pack(fill="x", padx=16, pady=4)
+        tk.Button(s, text="  🚪  Log Out", anchor="w",
+                  bg=SIDEBAR, fg="#FC8181",
+                  activebackground="#742A2A", activeforeground=WHITE,
+                  relief="flat", bd=0,
+                  font=("Segoe UI", 10),
+                  padx=12, pady=11,
+                  cursor="hand2",
+                  command=self._logout).pack(fill="x", pady=(0, 14))
+
+    def _highlight_nav(self, active_label):
+        for label, btn in self._nav_btns.items():
+            btn.config(bg=PURPLE if label == active_label else SIDEBAR)
+
+    # ── Frame switching ─────────────────────────────────────────────────────────
+    def _swap(self, FrameClass, nav_label, **kwargs):
+        if self._current_frame:
+            self._current_frame.destroy()
+        self._current_frame = FrameClass(
+            self.content,
+            name=self.name,
+            email=self.email,
+            dashboard=self,
+            **kwargs
+        )
+        self._current_frame.pack(fill="both", expand=True)
+        self._highlight_nav(nav_label)
+
     def _show_home(self):
-        self._clear_content()
+        if self._current_frame:
+            self._current_frame.destroy()
+        self._current_frame = HomeFrame(
+            self.content,
+            name=self.name,
+            email=self.email,
+            dashboard=self,
+            on_apply=self._show_apply,
+            on_renew=self._show_renew,
+            on_apps=self._show_applications,
+        )
+        self._current_frame.pack(fill="both", expand=True)
+        self._highlight_nav("Home")
 
-        # Top bar
-        topbar = tk.Frame(self.content, bg=WHITE, height=64)
-        topbar.pack(fill="x")
-        topbar.pack_propagate(False)
-        tk.Frame(topbar, bg=BORDER, height=1).pack(side="bottom", fill="x")
-        tk.Label(topbar, text="Dashboard",
-                 bg=WHITE, fg=TEXT_DARK,
-                 font=("Segoe UI", 16, "bold")).pack(side="left", padx=28, pady=16)
+    def _show_apply(self):
+        try:
+            from apply_scholarship import ApplyFrame
+            self._swap(ApplyFrame, "Apply Scholarship")
+        except ImportError:
+            messagebox.showerror("Error", "apply_scholarship.py not found.")
 
-        # Body
-        body = tk.Frame(self.content, bg=BG)
-        body.pack(fill="both", expand=True, padx=32, pady=28)
+    def _show_applications(self):
+        try:
+            from my_applications import ApplicationsFrame
+            self._swap(ApplicationsFrame, "My Applications")
+        except ImportError:
+            messagebox.showerror("Error", "my_applications.py not found.")
 
-        tk.Label(body, text=f"Welcome back, {self.name}! 👋",
-                 bg=BG, fg=TEXT_DARK,
-                 font=("Segoe UI", 20, "bold")).pack(anchor="w")
-        tk.Label(body,
-                 text="Here's a summary of your scholarship activity.",
-                 bg=BG, fg=TEXT_GRAY,
-                 font=("Segoe UI", 11)).pack(anchor="w", pady=(4, 24))
+    def _show_renew(self):
+        try:
+            from renewal_scholarship import RenewFrame
+            threading.Thread(target=self._check_renewal_open, daemon=True).start()
+        except ImportError:
+            messagebox.showerror("Error", "renewal_scholarship.py not found.")
 
-        # Stat cards row
-        cards_row = tk.Frame(body, bg=BG)
-        cards_row.pack(anchor="w")
-
-        stats = [
-            ("📋", "Applications", self._count("applications"), PURPLE),
-            ("🔄", "Renewals",     self._count("renewals"),     PURPLE2),
-        ]
-        for icon, label, value, accent in stats:
-            shadow = tk.Frame(cards_row, bg=SHADOW)
-            shadow.pack(side="left", padx=(0, 20))
-            card = tk.Frame(shadow, bg=WHITE, padx=28, pady=20)
-            card.pack(padx=2, pady=2)
-            tk.Label(card, text=icon,
-                     bg=WHITE, font=("Segoe UI", 22)).pack(anchor="w")
-            tk.Label(card, text=str(value),
-                     bg=WHITE, fg=accent,
-                     font=("Segoe UI", 30, "bold")).pack(anchor="w")
-            tk.Label(card, text=label,
-                     bg=WHITE, fg=TEXT_GRAY,
-                     font=("Segoe UI", 11)).pack(anchor="w")
-
-        # Quick actions
-        tk.Label(body, text="Quick Actions",
-                 bg=BG, fg=TEXT_DARK,
-                 font=("Segoe UI", 13, "bold")).pack(anchor="w", pady=(32, 12))
-
-        actions_row = tk.Frame(body, bg=BG)
-        actions_row.pack(anchor="w")
-
-        quick = [
-            ("📋  Apply for Scholarship", self._open_apply),
-            ("📁  View My Applications",  self._open_applications),
-            ("🔄  Submit Renewal",        self._open_renewal),
-        ]
-        for text, cmd in quick:
-            btn = tk.Button(actions_row, text=text,
-                            bg=PURPLE, fg=WHITE,
-                            activebackground=PURPLE2, activeforeground=WHITE,
-                            relief="flat", bd=0, cursor="hand2",
-                            font=("Segoe UI", 10, "bold"),
-                            padx=18, pady=10, command=cmd)
-            btn.pack(side="left", padx=(0, 12))
-            btn.bind("<Enter>", lambda e, b=btn: b.config(bg=PURPLE2))
-            btn.bind("<Leave>", lambda e, b=btn: b.config(bg=PURPLE))
-
-    def _count(self, table: str) -> int:
-        uid = self.user.get("user_id") or self.user.get("id")
-        if not uid:
-            return 0
+    def _check_renewal_open(self):
+        """Check DB if renewal window is open before showing the renew page."""
         try:
             from db import fetch_one
-            row = fetch_one(
-                f"SELECT COUNT(*) AS cnt FROM {table} WHERE user_id = %s", (uid,))
-            return row["cnt"] if row else 0
+            row = fetch_one("SELECT is_open FROM renewal_settings LIMIT 1")
+            is_open = row and row.get("is_open", 0)
         except Exception:
-            return 0
+            is_open = False
 
-    def _open_apply(self):
-        self._clear_content()
-        from pages.apply_scholarship import ApplyScholarshipPage
-        ApplyScholarshipPage(self.content, self.user)
+        def _load():
+            if is_open:
+                from renewal_scholarship import RenewFrame
+                self._swap(RenewFrame, "Renewal")
+            else:
+                messagebox.showinfo(
+                    "Renewal Closed",
+                    "The renewal window is currently closed.\n"
+                    "Please check back later."
+                )
+        self.after(0, _load)
 
-    def _open_applications(self):
-        self._clear_content()
-        from pages.my_applications import MyApplicationsPage
-        MyApplicationsPage(self.content, self.user)
-
-    def _open_renewal(self):
-        self._clear_content()
-        from pages.renewal_scholarship import RenewalScholarshipPage
-        RenewalScholarshipPage(self.content, self.user)
-
-    def _open_profile(self):
-        self._clear_content()
-        from pages.student_profile import StudentProfilePage
-        StudentProfilePage(self.content, self.user)
+    def _show_profile(self):
+        try:
+            from student_profile import StudentProfilePage
+            self._swap(StudentProfilePage, "My Profile")
+        except ImportError:
+            messagebox.showerror("Error", "student_profile.py not found.")
 
     def _logout(self):
-        self.app.logout()
+        if messagebox.askyesno("Log Out", "Are you sure you want to log out?"):
+            self.destroy()
+            try:
+                from login import LoginWindow
+                LoginWindow().mainloop()
+            except ImportError:
+                pass
+
+
+# ── Entry point (standalone test) ──────────────────────────────────────────────
+if __name__ == "__main__":
+    StudentDashboard(
+        name="Justin Sobrevinas",
+        email="jsobrevinas6@gmail.com"
+    ).mainloop()
