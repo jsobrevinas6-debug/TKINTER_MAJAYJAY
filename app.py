@@ -1,24 +1,11 @@
 import tkinter as tk
-from tkinter import messagebox
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# ── Shared colors ──────────────────────────────────────────────────────────────
-BG        = "#F7FAFC"
-WHITE     = "#FFFFFF"
-PURPLE    = "#667EEA"
-PURPLE2   = "#764BA2"
-GREEN     = "#48BB78"
-BORDER    = "#E2E8F0"
-TEXT_DARK = "#2D3748"
-TEXT_GRAY = "#718096"
-SIDEBAR   = "#2D3748"
-SIDEBAR_H = "#4A5568"
+BG = "#F7FAFC"
 
 
 class App(tk.Tk):
-    """
-    Single Tk root — one mainloop, pages swap as frames inside self.container.
-    """
-
     def __init__(self):
         super().__init__()
         self.title("Majayjay Scholars")
@@ -26,12 +13,10 @@ class App(tk.Tk):
         self.configure(bg=BG)
         self._center(580, 660)
 
-        # Session state
         self._user_name  = ""
         self._user_email = ""
         self._user_type  = ""
 
-        # One container all pages fill
         self.container = tk.Frame(self, bg=BG)
         self.container.pack(fill="both", expand=True)
 
@@ -55,16 +40,15 @@ class App(tk.Tk):
         self._current = widget
         widget.pack(fill="both", expand=True)
 
-    # ── Navigation methods (called by page frames) ─────────────────────────────
-
+    # ── Navigation ─────────────────────────────────────────────────────────────
     def show_login(self):
         self._resize(580, 660)
-        from pages.login import LoginPage
+        from pages.login.login import LoginPage
         self._swap(LoginPage(self.container, app=self))
 
     def show_register(self):
         self._resize(600, 780)
-        from pages.registration import RegistrationPage
+        from pages.login.registration import RegistrationPage
         self._swap(RegistrationPage(self.container, app=self))
 
     def show_student_dashboard(self, name: str, email: str):
@@ -72,7 +56,7 @@ class App(tk.Tk):
         self._user_email = email
         self._user_type  = "student"
         self._resize(1060, 720)
-        from pages.student_dashboard import StudentDashboard
+        from pages.student.student_dashboard import StudentDashboard
         self._swap(StudentDashboard(self.container,
                                     name=name, email=email, app=self))
 
@@ -82,53 +66,57 @@ class App(tk.Tk):
             self._user_email = email
             self._user_type  = "mayor"
         self._resize(1060, 720)
-        from pages.mayor_dashboard import MayorDashboard
+        from pages.mayor.mayor_dashboard import MayorDashboard
         self._swap(MayorDashboard(self.container,
                                    name=self._user_name,
                                    email=self._user_email,
                                    app=self))
 
-    def show_mayor_pending(self):
-        self._resize(1060, 720)
-        from pages.pending_scholars import PendingScholarsFrame
-        self._swap(PendingScholarsFrame(self.container,
+    def show_mayor_records(self):
+        self._resize(1200, 720)
+        from pages.mayor.records import RecordsFrame
+        self._swap(RecordsFrame(self.container,
+                                name=self._user_name,
+                                email=self._user_email,
+                                app=self))
+
+    def show_records(self):
+        self.show_mayor_records()
+
+    def show_scholar_records(self):
+        self.show_mayor_records()
+
+
+    def show_renewal_settings(self):
+        self.show_mayor_renewal_settings()
+
+    def show_mayor_renewal_settings(self):
+        self._resize(1100, 760)
+        from pages.mayor.renewal_settings import RenewalSettingsFrame
+        self._swap(RenewalSettingsFrame(self.container,
                                         name=self._user_name,
                                         email=self._user_email,
                                         app=self))
 
-    def show_mayor_records(self):
-        self._resize(1200, 720)
-        from pages.scholar_records import ScholarRecordsFrame
-        self._swap(ScholarRecordsFrame(self.container,
-                                       name=self._user_name,
-                                       email=self._user_email,
-                                       app=self))
-
     def show_admin_dashboard(self, name: str = "", email: str = ""):
-        """Placeholder — build admin pages similarly."""
         if name:
             self._user_name  = name
             self._user_email = email
             self._user_type  = "admin"
-        self._resize(1060, 720)
-        # Swap for admin page when ready
-        # from pages.admin_dashboard import AdminDashboard
-        # self._swap(AdminDashboard(...))
-        messagebox.showinfo("Admin",
-                            f"Welcome Admin {self._user_name}!\n"
-                            "(Admin dashboard coming soon)")
+        self._resize(1200, 720)
+        from pages.admin.admin_dashboard import AdminDashboard
+        self._swap(AdminDashboard(self.container,
+                                  name=self._user_name,
+                                  email=self._user_email,
+                                  app=self))
 
-    # ── Called by login page after successful authentication ───────────────────
+    # ── Auth ───────────────────────────────────────────────────────────────────
     def on_login_success(self, user: dict):
-        """
-        Route to the correct dashboard basemnasd on user_type from DB.
-        `user` is the full row dict returned by db.login().
-        """
         name  = (user.get("name") or
                  f"{user.get('first_name','')} {user.get('last_name','')}".strip() or
-                 user.get("email","").split("@")[0])
-        email = user.get("email","")
-        utype = user.get("user_type","student")
+                 user.get("email", "").split("@")[0])
+        email = user.get("email", "")
+        utype = user.get("user_type", "student")
 
         if utype == "admin":
             self.show_admin_dashboard(name, email)
@@ -137,7 +125,6 @@ class App(tk.Tk):
         else:
             self.show_student_dashboard(name, email)
 
-    # ── Logout ─────────────────────────────────────────────────────────────────
     def logout(self):
         self._user_name  = ""
         self._user_email = ""
@@ -147,7 +134,6 @@ class App(tk.Tk):
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # Optional: test DB before opening window
     try:
         from db import test_connection
         test_connection()

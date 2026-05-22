@@ -88,7 +88,7 @@ def test_connection():
     try:
         conn = get_connection()
         if conn.is_connected():
-            info = conn.get_server_info()
+            info = conn.server_info
             print(f"✅ Connected to MySQL Server version {info}")
             conn.close()
     except Error as e:
