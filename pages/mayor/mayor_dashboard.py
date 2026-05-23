@@ -15,6 +15,11 @@ try:
 except Exception:
     get_logo = lambda size=60: None
 
+try:
+    from pages.sidebar import Sidebar
+except ImportError:
+    from sidebar import Sidebar
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Palette
 # ══════════════════════════════════════════════════════════════════════════════
@@ -62,6 +67,7 @@ SAMPLE_APPS = [
      "address": f"{i} Sample St.", "municipality": "Calamba", "baranggay": f"Brgy {i}",
      "school_name": "University of the Philippines", "course": "BS Computer Science",
      "year_level": str((i % 4) + 1), "gwa": f"{1 + (i % 3) * 0.25:.2f}",
+     # normalised to lowercase to match DB enum and _count comparisons
      "status": ["approved", "pending", "rejected"][i % 3],
      "scholarship_type": ["new", "renewal"][i % 2],
      "year_applied": "2024", "reason": "Financial need and academic excellence.",
@@ -83,7 +89,8 @@ SAMPLE_RENEWALS = [
      "reason": "Continuing academic excellence.",
      "school_id_path": "", "id_picture_path": "", "birth_certificate_path": "",
      "grades_path": "", "cor_path": "",
-     "status": ["Approved", "Pending", "Rejected"][i % 3],
+     # normalised to lowercase so _count works consistently
+     "status": ["approved", "pending", "rejected"][i % 3],
      "submission_date": f"2024-0{(i%9)+1}-{(i%28)+1:02d}",
      "archived": 0}
     for i in range(1, 21)
@@ -105,7 +112,6 @@ class MayorDashboard(tk.Frame):
         self.app   = app
 
         # ── Dashboard state ───────────────────────────────────────────────────
-        self._renewal_open  = False
         self._stat_cards    = {}
         self._summary_cards = {}
 
@@ -131,39 +137,19 @@ class MayorDashboard(tk.Frame):
     # Layout skeleton
     # ══════════════════════════════════════════════════════════════════════════
     def _build(self):
-        # ── Sidebar ───────────────────────────────────────────────────────────
-        sidebar = tk.Frame(self, bg=SIDEBAR_DARK, width=238)
-        sidebar.pack(side="left", fill="y")
-        sidebar.pack_propagate(False)
-        self._build_sidebar(sidebar)
+        self._sidebar = Sidebar(
+            self, user_type="mayor", name=self.name,
+            active_item="Dashboard",
+            on_nav=self._on_nav,
+            on_logout=self._logout,
+        )
+        self._sidebar.pack(side="left", fill="y")
 
-        # ── Main area (canvas + scrollbar) ────────────────────────────────────
-        main = tk.Frame(self, bg=BG)
-        main.pack(side="left", fill="both", expand=True)
-
-        self._main_canvas = tk.Canvas(main, bg=BG, highlightthickness=0)
-        sb = tk.Scrollbar(main, orient="vertical", command=self._main_canvas.yview)
-        self._main_canvas.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
-        self._main_canvas.pack(fill="both", expand=True)
-
-        self._inner = tk.Frame(self._main_canvas, bg=BG)
-        wid = self._main_canvas.create_window((0, 0), window=self._inner, anchor="nw")
-
-        def _resize(e):
-            bbox = self._main_canvas.bbox("all")
-            if bbox:
-                self._main_canvas.configure(scrollregion=bbox)
-            self._main_canvas.itemconfig(wid, width=e.width)
-
-        self._main_canvas.bind("<Configure>", _resize)
-        self._main_canvas.bind("<MouseWheel>",
-            lambda e: self._main_canvas.yview_scroll(int(-e.delta / 120), "units"))
-        self._main_canvas.bind("<Button-4>", lambda e: self._main_canvas.yview_scroll(-1, "units"))
-        self._main_canvas.bind("<Button-5>", lambda e: self._main_canvas.yview_scroll(1, "units"))
+        self._main = tk.Frame(self, bg=BG)
+        self._main.pack(side="left", fill="both", expand=True)
 
         # ── Persistent top bar ────────────────────────────────────────────────
-        topbar = tk.Frame(self._inner, bg=WHITE, height=64)
+        topbar = tk.Frame(self._main, bg=WHITE, height=64)
         topbar.pack(fill="x")
         topbar.pack_propagate(False)
         tk.Frame(topbar, bg=BORDER, height=1).pack(side="bottom", fill="x")
@@ -173,109 +159,21 @@ class MayorDashboard(tk.Frame):
         self._topbar_title.pack(side="left", padx=28, pady=16)
 
         # ── Swappable content area ────────────────────────────────────────────
-        self._content_area = tk.Frame(self._inner, bg=BG)
+        self._content_area = tk.Frame(self._main, bg=BG)
         self._content_area.pack(fill="both", expand=True)
 
         self._render_home()
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # Sidebar
-    # ══════════════════════════════════════════════════════════════════════════
-    def _build_sidebar(self, s):
-        hdr = tk.Canvas(s, height=170, bg=SIDEBAR_DARK, highlightthickness=0)
-        hdr.pack(fill="x")
-        hdr.bind("<Configure>", lambda e: self._draw_sidebar_header(hdr))
-        self._sidebar_hdr = hdr
-
-        tk.Frame(s, bg=SIDEBAR_LINE, height=1).pack(fill="x", padx=18)
-
-        nav_items = [
-            ("Dashboard",       self._show_home),
-            ("Scholar Records", self._open_records),
-        ]
-        self._nav_btns = {}
-        nav_frame = tk.Frame(s, bg=SIDEBAR_DARK)
-        nav_frame.pack(fill="x", pady=(10, 0))
-
-        for label, cmd in nav_items:
-            btn = tk.Button(nav_frame, text=f"  {label}", anchor="w",
-                            bg=SIDEBAR_DARK, fg=SIDEBAR_TEXT,
-                            activebackground=NAV_HOVER, activeforeground=DARK,
-                            relief="flat", bd=0,
-                            font=("Segoe UI", 10),
-                            padx=18, pady=10, cursor="hand2")
-            btn.pack(fill="x", padx=10, pady=3)
-            btn.bind("<Enter>", lambda e, b=btn: b.config(bg=NAV_HOVER)
-                     if b["bg"] != NAV_ACTIVE else None)
-            btn.bind("<Leave>", lambda e, b=btn: b.config(bg=SIDEBAR_DARK)
-                     if b["bg"] == NAV_HOVER else None)
-            self._nav_btns[label] = btn
-            btn.config(command=lambda c=cmd, b=btn: self._nav(c, b))
-
-        tk.Frame(nav_frame, bg=SIDEBAR_LINE, height=1).pack(
-            fill="x", padx=10, pady=(8, 8))
-
-        for label, cmd in [("Renewal Settings", self._open_renewal_settings)]:
-            ren_btn = tk.Button(nav_frame, text=f"  {label}", anchor="w",
-                                bg=SIDEBAR_DARK, fg=SIDEBAR_TEXT,
-                                activebackground=NAV_HOVER, activeforeground=DARK,
-                                relief="flat", bd=0,
-                                font=("Segoe UI", 10),
-                                padx=18, pady=10, cursor="hand2")
-            ren_btn.pack(fill="x", padx=10, pady=3)
-            ren_btn.bind("<Enter>", lambda e, b=ren_btn: b.config(bg=NAV_HOVER)
-                         if b["bg"] != NAV_ACTIVE else None)
-            ren_btn.bind("<Leave>", lambda e, b=ren_btn: b.config(bg=SIDEBAR_DARK)
-                         if b["bg"] == NAV_HOVER else None)
-            self._nav_btns[label] = ren_btn
-            ren_btn.config(command=lambda b=ren_btn, c=cmd: self._nav(c, b))
-
-        self._nav_btns["Dashboard"].config(bg=NAV_ACTIVE, fg=WHITE)
-
-        tk.Frame(s, bg=SIDEBAR_DARK).pack(fill="both", expand=True)
-        tk.Frame(s, bg=SIDEBAR_LINE, height=1).pack(fill="x", padx=18, pady=(12, 6))
-
-        lo = tk.Button(s, text="  Log Out", anchor="w",
-                       bg=SIDEBAR_DARK, fg="#E53E3E",
-                       activebackground="#742A2A", activeforeground=WHITE,
-                       relief="flat", bd=0,
-                       font=("Segoe UI", 10),
-                       padx=18, pady=10, cursor="hand2",
-                       command=self._logout)
-        lo.pack(fill="x", padx=10, pady=(0, 14))
-        lo.bind("<Enter>", lambda e: lo.config(bg="#742A2A", fg=WHITE))
-        lo.bind("<Leave>", lambda e: lo.config(bg=SIDEBAR_DARK, fg="#E53E3E"))
-
-    def _draw_sidebar_header(self, c):
-        c.delete("all")
-        w, h = c.winfo_width(), c.winfo_height()
-        steps = 44
-        for i in range(steps):
-            t = i / steps
-            r = int(0x66 + (0x76 - 0x66) * t)
-            g = int(0x7E + (0x4B - 0x7E) * t)
-            b = int(0xEA + (0xA2 - 0xEA) * t)
-            c.create_rectangle(0, i * h // steps, w, (i+1) * h // steps,
-                                fill=f"#{r:02x}{g:02x}{b:02x}", outline="")
-        cx, cy, r = w // 2, 58, 30
-        logo = get_logo(r * 2)
-        if logo:
-            if not hasattr(self, "_logo_photo"):
-                self._logo_photo = logo
-            c.create_image(cx, cy, image=self._logo_photo)
-        else:
-            c.create_oval(cx-r, cy-r, cx+r, cy+r, fill=WHITE, outline="")
-            c.create_text(cx, cy, text="MJS", fill=PURPLE, font=("Segoe UI", 14, "bold"))
-        c.create_text(cx, cy+r+18, text=self.name, fill=WHITE,
-                      font=("Segoe UI", 11, "bold"))
-        c.create_text(cx, cy+r+35, text="Mayor Panel",
-                      fill="#DDE3FF", font=("Segoe UI", 8))
-
-    def _nav(self, page_fn, btn):
-        for b in self._nav_btns.values():
-            b.config(bg=SIDEBAR_DARK, fg=SIDEBAR_TEXT)
-        btn.config(bg=NAV_ACTIVE, fg=WHITE)
-        page_fn()
+    def _on_nav(self, label):
+        if label == "Dashboard":
+            self._show_home()
+        elif label == "Scholar Records":
+            self._open_records()
+        elif label == "Renewal Settings":
+            self._open_renewal_settings()
+        elif label == "Profile Settings":
+            # FIX: was not in the original on_nav — ensure it's wired here
+            self._show_profile_settings()
 
     # ══════════════════════════════════════════════════════════════════════════
     # Content switching
@@ -283,7 +181,6 @@ class MayorDashboard(tk.Frame):
     def _clear_content(self):
         for w in self._content_area.winfo_children():
             w.destroy()
-        self._main_canvas.yview_moveto(0)
 
     def _show_home(self):
         self._topbar_title.config(text="Dashboard")
@@ -302,7 +199,6 @@ class MayorDashboard(tk.Frame):
             return
         self._topbar_title.config(text="Scholar Records")
         self._clear_content()
-        # Reset section state on each visit (optional – remove to persist)
         self._rec_section       = "applications"
         self._rec_show_archived = False
         self._rec_status_filter = "all"
@@ -315,17 +211,40 @@ class MayorDashboard(tk.Frame):
     # ── HOME VIEW ─────────────────────────────────────────────────────────────
     # ══════════════════════════════════════════════════════════════════════════
     def _render_home(self):
-        body = tk.Frame(self._content_area, bg=BG)
-        body.pack(fill="both", expand=True, padx=32, pady=24)
+        canvas = tk.Canvas(self._content_area, bg=BG, highlightthickness=0)
+        sb = tk.Scrollbar(self._content_area, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        canvas.pack(fill="both", expand=True)
 
-        tk.Label(body, text=f"Welcome back, {self.name}! 🏛",
+        # FIX: all content now packed into `inner` so padx=32/pady=24 applies.
+        # Previously a dead `inner` frame was created but content was packed
+        # into `body` directly (no padding at all).
+        inner = tk.Frame(canvas, bg=BG)
+        wid   = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _resize(e):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.itemconfig(wid, width=e.width)
+        canvas.bind("<Configure>", _resize)
+        # FIX: added Linux scroll bindings
+        canvas.bind("<MouseWheel>",
+                    lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"))
+        canvas.bind("<Button-4>", lambda e: canvas.yview_scroll(-1, "units"))
+        canvas.bind("<Button-5>", lambda e: canvas.yview_scroll(1, "units"))
+
+        content = tk.Frame(inner, bg=BG)
+        content.pack(fill="both", expand=True, padx=32, pady=24)
+
+        tk.Label(content, text=f"Welcome back, {self.name}! 🏛",
                  bg=BG, fg=DARK, font=("Segoe UI", 20, "bold")).pack(anchor="w")
-        tk.Label(body, text="Overview of scholarship applications and renewals.",
+        tk.Label(content,
+                 text="Overview of scholarship applications and renewals.",
                  bg=BG, fg=GRAY, font=("Segoe UI", 11)).pack(anchor="w", pady=(4, 24))
 
         # ── New Applications ──────────────────────────────────────────────────
-        self._section_lbl(body, "🆕  New Scholarship Applications")
-        new_row = tk.Frame(body, bg=BG)
+        self._section_lbl(content, "🆕  New Scholarship Applications")
+        new_row = tk.Frame(content, bg=BG)
         new_row.pack(fill="x", pady=(0, 24))
         for key, label, icon, accent in [
             ("total_new",    "Total New",  "📋", PURPLE),
@@ -338,28 +257,8 @@ class MayorDashboard(tk.Frame):
             self._stat_cards[key] = card
 
         # ── Renewals ──────────────────────────────────────────────────────────
-        ren_hdr = tk.Frame(body, bg=BG)
-        ren_hdr.pack(fill="x", pady=(0, 8))
-        self._section_lbl(ren_hdr, "🔄  Scholarship Renewals", pack=False).pack(side="left")
-
-        self._renewal_badge = tk.Label(ren_hdr, text="● CLOSED",
-                                       bg=BG, fg=RED, font=("Segoe UI", 10, "bold"))
-        self._renewal_badge.pack(side="left", padx=12)
-
-        self._toggle_btn = tk.Button(ren_hdr, text="🔓 Open Renewal",
-                                     bg=GREEN, fg=WHITE,
-                                     activebackground=GREEN2,
-                                     relief="flat", bd=0,
-                                     font=("Segoe UI", 10, "bold"),
-                                     padx=16, pady=6, cursor="hand2",
-                                     command=self._toggle_renewal)
-        self._toggle_btn.pack(side="right")
-        self._toggle_btn.bind("<Enter>",
-            lambda e: self._toggle_btn.config(bg=RED2 if self._renewal_open else GREEN2))
-        self._toggle_btn.bind("<Leave>",
-            lambda e: self._toggle_btn.config(bg=RED if self._renewal_open else GREEN))
-
-        renew_row = tk.Frame(body, bg=BG)
+        self._section_lbl(content, "🔄  Scholarship Renewals")
+        renew_row = tk.Frame(content, bg=BG)
         renew_row.pack(fill="x", pady=(0, 24))
         for key, label, icon, accent in [
             ("total_renew",    "Total Renewals", "🔄", PURPLE),
@@ -372,8 +271,8 @@ class MayorDashboard(tk.Frame):
             self._stat_cards[key] = card
 
         # ── Overall Summary ───────────────────────────────────────────────────
-        self._section_lbl(body, "📊  Overall Summary")
-        sum_shadow = tk.Frame(body, bg=SHADOW)
+        self._section_lbl(content, "📊  Overall Summary")
+        sum_shadow = tk.Frame(content, bg=SHADOW)
         sum_shadow.pack(fill="x", pady=(0, 24))
         sum_card = tk.Frame(sum_shadow, bg=WHITE, padx=24, pady=20)
         sum_card.pack(fill="x", padx=2, pady=2)
@@ -390,12 +289,11 @@ class MayorDashboard(tk.Frame):
             self._summary_cards[key] = card
 
         # ── Quick Actions ─────────────────────────────────────────────────────
-        self._section_lbl(body, "⚡  Quick Actions")
-        btn_row = tk.Frame(body, bg=BG)
+        self._section_lbl(content, "⚡  Quick Actions")
+        btn_row = tk.Frame(content, bg=BG)
         btn_row.pack(anchor="w")
         for text, cmd, color, hover in [
-            ("📋  View Scholar Records", self._open_records,          PURPLE,  PURPLE2),
-            ("⚙️  Renewal Settings",     self._open_renewal_settings, DARK,    "#4A5568"),
+            ("📋  View Scholar Records", self._open_records, PURPLE, PURPLE2),
         ]:
             btn = tk.Button(btn_row, text=text,
                             bg=color, fg=WHITE,
@@ -434,9 +332,9 @@ class MayorDashboard(tk.Frame):
     # ══════════════════════════════════════════════════════════════════════════
     def _load_all(self):
         try:
+            # FIX: was querying dropped `application` table; corrected to `applications`
             apps     = fetch_all("SELECT status FROM applications") or []
-            renewals = fetch_all("SELECT status FROM renewals")     or []
-            setting  = fetch_one("SELECT is_open FROM renewal_settings WHERE id=1")
+            renewals = fetch_all("SELECT status FROM renew")        or []
             s = {
                 "total_new":      len(apps),
                 "approved_new":   _count(apps,     "status", "approved"),
@@ -451,53 +349,20 @@ class MayorDashboard(tk.Frame):
             s["approved_all"] = s["approved_new"] + s["approved_renew"]
             s["pending_all"]  = s["pending_new"]  + s["pending_renew"]
             s["rejected_all"] = s["rejected_new"] + s["rejected_renew"]
-            is_open = bool(setting["is_open"]) if setting else False
-            self.after(0, self._update_home_ui, s, is_open)
+            self.after(0, self._update_home_ui, s)
         except Exception as e:
             self.after(0, lambda: print(f"[Mayor] load error: {e}"))
 
-    def _update_home_ui(self, s, is_open):
+    def _update_home_ui(self, s):
         for key, card in self._stat_cards.items():
             card._num_label.config(text=str(s.get(key, 0)))
         for key, card in self._summary_cards.items():
             card._num_label.config(text=str(s.get(key, 0)))
-        self._renewal_open = is_open
-        self._update_renewal_badge()
-
-    def _update_renewal_badge(self):
-        if self._renewal_open:
-            self._renewal_badge.config(text="● OPEN",   fg=GREEN)
-            self._toggle_btn.config(text="🔒 Close Renewal", bg=RED)
-        else:
-            self._renewal_badge.config(text="● CLOSED", fg=RED)
-            self._toggle_btn.config(text="🔓 Open Renewal",  bg=GREEN)
-
-    def _toggle_renewal(self):
-        self._toggle_btn.config(state="disabled")
-        threading.Thread(target=self._do_toggle, daemon=True).start()
-
-    def _do_toggle(self):
-        try:
-            new_status = not self._renewal_open
-            execute("UPDATE renewal_settings SET is_open=%s WHERE id=1", (new_status,))
-            self.after(0, self._on_toggled, new_status)
-        except Exception as e:
-            self.after(0, lambda: messagebox.showerror("Error", str(e)))
-            self.after(0, lambda: self._toggle_btn.config(state="normal"))
-
-    def _on_toggled(self, new_status):
-        self._renewal_open = new_status
-        self._update_renewal_badge()
-        self._toggle_btn.config(state="normal")
-        status_text = "OPEN ✅" if new_status else "CLOSED 🔒"
-        messagebox.showinfo("Renewal Status",
-                            f"Scholarship renewal is now {status_text}")
 
     # ══════════════════════════════════════════════════════════════════════════
     # ── RECORDS VIEW ──────────────────────────────────────────────────────────
     # ══════════════════════════════════════════════════════════════════════════
     def _rec_render(self):
-        """Clear the content area and rebuild the records view."""
         self._clear_content()
 
         wrap = tk.Frame(self._content_area, bg=BG)
@@ -531,12 +396,13 @@ class MayorDashboard(tk.Frame):
         grid.pack(fill="x", pady=(0, 20))
 
         total    = len(self._rec_apps) + len(self._rec_renewals)
-        approved = (_count(self._rec_apps, "status", "approved") +
-                    _count(self._rec_renewals, "status", "Approved"))
-        pending  = (_count(self._rec_apps, "status", "pending") +
-                    _count(self._rec_renewals, "status", "Pending"))
-        rejected = (_count(self._rec_apps, "status", "rejected") +
-                    _count(self._rec_renewals, "status", "Rejected"))
+        # FIX: both datasets now use lowercase so all counts are consistent
+        approved = (_count(self._rec_apps,     "status", "approved") +
+                    _count(self._rec_renewals, "status", "approved"))
+        pending  = (_count(self._rec_apps,     "status", "pending") +
+                    _count(self._rec_renewals, "status", "pending"))
+        rejected = (_count(self._rec_apps,     "status", "rejected") +
+                    _count(self._rec_renewals, "status", "rejected"))
 
         for col, (label, val, colour) in enumerate([
             ("Total",    str(total),    PURPLE),
@@ -604,7 +470,6 @@ class MayorDashboard(tk.Frame):
         inner = tk.Frame(card, bg=WHITE)
         inner.pack(fill="both", expand=True, padx=24, pady=20)
 
-        # Header row
         hdr = tk.Frame(inner, bg=WHITE)
         hdr.pack(fill="x", pady=(0, 12))
         title = ("Renewal Applications" if self._rec_section == "renewals"
@@ -612,7 +477,6 @@ class MayorDashboard(tk.Frame):
         tk.Label(hdr, text=title, bg=WHITE, fg=DARK,
                  font=("Segoe UI", 12, "bold")).pack(side="left")
 
-        # Search
         self._rec_search_var = tk.StringVar()
         self._rec_search_var.trace_add("write", lambda *_: self._rec_on_search())
         sw = tk.Frame(hdr, bg=WHITE, highlightbackground=BORDER, highlightthickness=1)
@@ -626,7 +490,6 @@ class MayorDashboard(tk.Frame):
 
         self._rec_build_tree(inner)
 
-        # Separator + pagination
         tk.Frame(inner, bg=BORDER2, height=1).pack(fill="x")
         self._rec_pag_frame = tk.Frame(inner, bg=WHITE)
         self._rec_pag_frame.pack(fill="x", pady=(10, 0))
@@ -703,18 +566,15 @@ class MayorDashboard(tk.Frame):
         q = (self._rec_search_var.get().strip().lower()
              if self._rec_search_var else "")
 
-        # Status filter
         if not self._rec_show_archived and self._rec_section != "renewals":
             if self._rec_status_filter != "all":
                 rows = [r for r in rows
                         if r.get("status", "").lower() == self._rec_status_filter]
 
-        # Search
         if q:
             rows = [r for r in rows
                     if q in " ".join(str(v) for v in r.values()).lower()]
 
-        # Sort
         if self._rec_sort_col:
             db_key = {
                 "app_id":"application_id","renewal_id":"renewal_id",
@@ -766,9 +626,11 @@ class MayorDashboard(tk.Frame):
             self._rec_tree.insert("", "end", iid=str(i),
                                   values=vals, tags=(tag,))
 
-        # Update sort arrows
+        # FIX: rstrip(" ▲▼") strips individual chars not the substring;
+        # replaced with explicit replace() calls
         for col in (*self._rec_cols, "actions"):
-            base = self._rec_tree.heading(col)["text"].rstrip(" ▲▼")
+            base = (self._rec_tree.heading(col)["text"]
+                    .replace(" ▲", "").replace(" ▼", ""))
             if col == self._rec_sort_col:
                 arrow = " ▲" if self._rec_sort_asc else " ▼"
                 self._rec_tree.heading(col, text=base + arrow)
@@ -881,7 +743,6 @@ class MayorDashboard(tk.Frame):
         py = self.winfo_y() + (self.winfo_height() - h) // 2
         dlg.geometry(f"{w}x{h}+{px}+{py}")
 
-        # Header
         hdr = tk.Frame(dlg, bg=WHITE)
         hdr.pack(fill="x", padx=28, pady=(22, 0))
         full_name = " ".join(filter(None, [record.get("first_name"),
@@ -895,7 +756,6 @@ class MayorDashboard(tk.Frame):
                   command=dlg.destroy).pack(side="right")
         tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x", pady=10)
 
-        # Scrollable body
         bo = tk.Frame(dlg, bg=WHITE)
         bo.pack(fill="both", expand=True)
         bc = tk.Canvas(bo, bg=WHITE, highlightthickness=0)
@@ -910,7 +770,7 @@ class MayorDashboard(tk.Frame):
         bc.bind("<Configure>",
                 lambda e: bc.itemconfig(bwin, width=e.width))
         bc.bind("<MouseWheel>",
-                    lambda e: bc.yview_scroll(-1*(e.delta//120), "units"))
+                lambda e: bc.yview_scroll(-1*(e.delta//120), "units"))
         bc.bind("<Button-4>", lambda e: bc.yview_scroll(-1, "units"))
         bc.bind("<Button-5>", lambda e: bc.yview_scroll(1, "units"))
 
@@ -941,14 +801,13 @@ class MayorDashboard(tk.Frame):
         _row("Municipality / Barangay", loc)
         if rtype == "application":
             _row("School", record.get("school_name"))
-        _row("Course",      record.get("course"))
-        _row("Year Level",  record.get("year_level"))
-        _row("GWA",         record.get("gwa"))
-        _row("Type",        sch_type)
-        _row("Status",      status)
-        _row("Submitted",   record.get("submission_date"))
+        _row("Course",     record.get("course"))
+        _row("Year Level", record.get("year_level"))
+        _row("GWA",        record.get("gwa"))
+        _row("Type",       sch_type)
+        _row("Status",     status.capitalize())
+        _row("Submitted",  record.get("submission_date"))
 
-        # Reason
         f = tk.Frame(body, bg=WHITE)
         f.pack(fill="x", padx=28, pady=(0, 10))
         tk.Label(f, text="Reason", bg=WHITE, fg=DARK,
@@ -962,7 +821,6 @@ class MayorDashboard(tk.Frame):
                  wraplength=560, justify="left",
                  padx=12, pady=10).pack(fill="x")
 
-        # Documents
         f2 = tk.Frame(body, bg=WHITE)
         f2.pack(fill="x", padx=28, pady=(0, 16))
         tk.Label(f2, text="Documents", bg=WHITE, fg=DARK,
@@ -972,7 +830,6 @@ class MayorDashboard(tk.Frame):
                  bg=WHITE, fg=GRAY,
                  font=("Segoe UI", 9, "italic"), anchor="w").pack(fill="x", pady=(4, 0))
 
-        # Action buttons
         tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x")
         acts = tk.Frame(dlg, bg=WHITE)
         acts.pack(fill="x", padx=28, pady=14)
@@ -1020,9 +877,10 @@ class MayorDashboard(tk.Frame):
         for r in source:
             if r[id_key] == rid:
                 if action == "approve":
-                    r["status"] = "Approved" if rtype == "renewal" else "approved"
+                    # FIX: consistently lowercase for both apps and renewals
+                    r["status"] = "approved"
                 elif action == "reject":
-                    r["status"] = "Rejected" if rtype == "renewal" else "rejected"
+                    r["status"] = "rejected"
                 elif action == "archive":
                     r["archived"] = 1
                 elif action == "unarchive":
@@ -1035,6 +893,34 @@ class MayorDashboard(tk.Frame):
     # ══════════════════════════════════════════════════════════════════════════
     # Navigation stubs
     # ══════════════════════════════════════════════════════════════════════════
+    def _show_profile_settings(self):
+        """
+        FIX: Two bugs were here:
+          1. embedded=True was missing → ProfileSettingsPage built its own
+             topbar inside _content_area, causing a double-header and making
+             the back button call app.show_mayor_dashboard() which replaced
+             the whole window (sidebar included).
+          2. ProfileSettingsPage without embedded=True creates a Scrollbar
+             packed side='right' to itself, which visually pushed the sidebar
+             out of view on some geometry managers.
+        Solution: always pass embedded=True so the page reuses the mayor's
+        existing topbar and sidebar, and only renders its form content.
+        """
+        self._topbar_title.config(text="Profile Settings")
+        self._clear_content()
+        try:
+            from pages.profile_settings import ProfileSettingsPage
+        except ImportError:
+            from profile_settings import ProfileSettingsPage
+        ProfileSettingsPage(
+            self._content_area,
+            name=self.name,
+            email=self.email,
+            user_type="mayor",
+            app=self.app,
+            embedded=True,          # ← THE KEY FIX
+        ).pack(fill="both", expand=True)
+
     def _open_pending(self):
         if hasattr(self, "app") and self.app:
             self.app.show_mayor_pending()

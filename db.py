@@ -4,7 +4,7 @@ from mysql.connector import Error, pooling
 DB_CONFIG = {
     "host":     "localhost",
     "port":     3306,
-    "database": "majayjay_db",
+    "database": "majayjay_scholars",
     "user":     "root",
     "password": "admin123",  # ← change this
 }
@@ -106,12 +106,15 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, stored_hash: str) -> bool:
-    """Verify a password against a stored hash."""
+    """Verify a password — supports both plain text and pbkdf2 hashed."""
     try:
-        salt_hex, key_hex = stored_hash.split(":")
-        salt = bytes.fromhex(salt_hex)
-        key  = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100_000)
-        return key.hex() == key_hex
+        if ":" in stored_hash:
+            salt_hex, key_hex = stored_hash.split(":")
+            salt = bytes.fromhex(salt_hex)
+            key  = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100_000)
+            return key.hex() == key_hex
+        # plain text fallback (sample data)
+        return password == stored_hash
     except Exception:
         return False
 

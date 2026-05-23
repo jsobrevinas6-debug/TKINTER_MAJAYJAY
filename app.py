@@ -68,9 +68,9 @@ class App(tk.Tk):
         self._resize(1060, 720)
         from pages.mayor.mayor_dashboard import MayorDashboard
         self._swap(MayorDashboard(self.container,
-                                   name=self._user_name,
-                                   email=self._user_email,
-                                   app=self))
+                                  name=self._user_name,
+                                  email=self._user_email,
+                                  app=self))
 
     def show_mayor_records(self):
         self._resize(1200, 720)
@@ -80,16 +80,6 @@ class App(tk.Tk):
                                 email=self._user_email,
                                 app=self))
 
-    def show_records(self):
-        self.show_mayor_records()
-
-    def show_scholar_records(self):
-        self.show_mayor_records()
-
-
-    def show_renewal_settings(self):
-        self.show_mayor_renewal_settings()
-
     def show_mayor_renewal_settings(self):
         self._resize(1100, 760)
         from pages.mayor.renewal_settings import RenewalSettingsFrame
@@ -97,6 +87,15 @@ class App(tk.Tk):
                                         name=self._user_name,
                                         email=self._user_email,
                                         app=self))
+
+    def show_profile_settings(self):
+        self._resize(1060, 720)
+        from pages.profile_settings import ProfileSettingsPage
+        self._swap(ProfileSettingsPage(self.container,
+                                       name=self._user_name,
+                                       email=self._user_email,
+                                       user_type=self._user_type,
+                                       app=self))
 
     def show_admin_dashboard(self, name: str = "", email: str = ""):
         if name:
@@ -109,6 +108,11 @@ class App(tk.Tk):
                                   name=self._user_name,
                                   email=self._user_email,
                                   app=self))
+
+    # aliases
+    def show_records(self):              self.show_mayor_records()
+    def show_scholar_records(self):      self.show_mayor_records()
+    def show_renewal_settings(self):     self.show_mayor_renewal_settings()
 
     # ── Auth ───────────────────────────────────────────────────────────────────
     def on_login_success(self, user: dict):

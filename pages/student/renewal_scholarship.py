@@ -259,7 +259,7 @@ class RenewFrame(tk.Frame):
             uid = user["user_id"]
 
             app = fetch_one(
-                "SELECT application_id, barangay FROM applications WHERE user_id=%s AND status='approved' LIMIT 1",
+                "SELECT application_id, baranggay FROM application WHERE user_id=%s AND status='approved' LIMIT 1",
                 (uid,))
 
             if not app:
@@ -342,9 +342,36 @@ class RenewFrame(tk.Frame):
             uid = user["user_id"]
 
             execute("""
-                INSERT INTO renewals (application_id, user_id, status)
-                VALUES (%s, %s, 'pending')
-            """, (self._app_id, uid))
+                INSERT INTO renew (
+                    application_id, user_id,
+                    first_name, middle_name, last_name,
+                    student_id, contact_number,
+                    municipality, baranggay,
+                    course, year_level, gwa,
+                    reason,
+                    school_id_path, id_picture_path, birth_certificate_path,
+                    grades_path, cor_path,
+                    status
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'Pending')
+            """, (
+                self._app_id, uid,
+                self._vars["firstName"].get().strip(),
+                self._vars["middleName"].get().strip() or None,
+                self._vars["surname"].get().strip(),
+                self._vars["studentId"].get().strip(),
+                self._vars["contact"].get().strip(),
+                self._vars["municipality"].get().strip(),
+                self._vars["barangay"].get(),
+                self._vars["course"].get().strip(),
+                self._vars["yearLevel"].get(),
+                float(self._vars["gwa"].get().strip()),
+                reason,
+                self._files["school_id"],
+                self._files["id_picture"],
+                self._files["birth_cert"],
+                self._files["grades"],
+                self._files["cor"],
+            ))
 
             self.after(0, self._on_submitted)
         except Exception as exc:

@@ -21,6 +21,11 @@ try:
 except Exception:
     get_logo = lambda size=60: None
 
+try:
+    from pages.sidebar import Sidebar
+except ImportError:
+    from sidebar import Sidebar
+
 # =============================================================================
 #  PALETTE  (matches mayor_dashboard.py)
 # =============================================================================
@@ -65,12 +70,12 @@ def _load_apps():
         SELECT a.application_id, a.user_id,
                a.first_name, a.middle_name, a.last_name,
                a.student_id, a.contact_number,
-               a.municipality, a.barangay AS baranggay,
+               a.municipality, a.baranggay,
                a.school_name, a.course, a.year_level,
-               a.gwa, a.year_applied, a.essay AS reason,
-               a.status, a.submission_date,
+               a.gwa, a.reason,
+               a.status, a.archived, a.submission_date,
                u.email
-        FROM applications a
+        FROM application a
         LEFT JOIN users u ON u.user_id = a.user_id
         ORDER BY a.submission_date DESC
     """) or []
@@ -88,15 +93,14 @@ def _load_renewals():
         return []
     rows = fetch_all("""
         SELECT r.renewal_id, r.application_id, r.user_id,
-               r.status, r.submission_date,
-               a.first_name, a.middle_name, a.last_name,
-               a.student_id, a.contact_number,
-               a.municipality, a.barangay AS baranggay,
-               a.school_name, a.course, a.year_level,
-               a.gwa, a.essay AS reason,
+               r.status, r.archived, r.submission_date,
+               r.first_name, r.middle_name, r.last_name,
+               r.student_id, r.contact_number,
+               r.municipality, r.baranggay,
+               r.course, r.year_level,
+               r.gwa, r.reason,
                u.email
-        FROM renewals r
-        LEFT JOIN applications a ON a.application_id = r.application_id
+        FROM renew r
         LEFT JOIN users u ON u.user_id = r.user_id
         ORDER BY r.submission_date DESC
     """) or []
@@ -155,10 +159,12 @@ class RecordsFrame(tk.Frame):
     # =========================================================================
     def _build(self):
         # ── Sidebar ───────────────────────────────────────────────────────────
-        sidebar = tk.Frame(self, bg=SIDEBAR_DARK, width=238)
-        sidebar.pack(side="left", fill="y")
-        sidebar.pack_propagate(False)
-        self._build_sidebar(sidebar)
+        Sidebar(
+            self, user_type="mayor", name=self.name,
+            active_item="Scholar Records",
+            on_nav=self._on_nav,
+            on_logout=self._logout,
+        ).pack(side="left", fill="y")
 
         # ── Main area ─────────────────────────────────────────────────────────
         main = tk.Frame(self, bg=BG)
@@ -182,10 +188,12 @@ class RecordsFrame(tk.Frame):
             self._main_canvas.itemconfig(wid, width=e.width)
 
         self._main_canvas.bind("<Configure>", _resize)
-        self._main_canvas.bind_all(
-            "<MouseWheel>",
-            lambda e: self._main_canvas.yview_scroll(
-                int(-e.delta/120), "units"))
+
+        def _on_mousewheel(e):
+            if self._main_canvas.winfo_exists():
+                self._main_canvas.yview_scroll(int(-e.delta / 120), "units")
+        self._main_canvas.bind("<MouseWheel>", _on_mousewheel)
+        self.bind("<Destroy>", lambda e: self._main_canvas.unbind_all("<MouseWheel>"))
 
         # ── Top bar ───────────────────────────────────────────────────────────
         topbar = tk.Frame(self._inner, bg=WHITE, height=64)
@@ -314,7 +322,7 @@ class RecordsFrame(tk.Frame):
         c.create_text(cx, cy+r+18,
                       text=self.name or "Mayor", fill=WHITE,
                       font=("Segoe UI", 11, "bold"))
-        c.create_text(cx, cy+r+35, text="Mayor Panel",
+        c.create_text(cx, cy+r+35, text="Mayor Dashboard",
                       fill="#DDE3FF", font=("Segoe UI", 8))
 
     def _nav(self, page_fn, btn):
@@ -324,6 +332,14 @@ class RecordsFrame(tk.Frame):
         page_fn()
 
     # ── Sidebar navigation ────────────────────────────────────────────────────
+    def _on_nav(self, label):
+        if label == "Dashboard":
+            if self.app: self.app.show_mayor_dashboard()
+        elif label == "Scholar Records":
+            pass  # already here
+        elif label == "Renewal Settings":
+            if self.app: self.app.show_mayor_renewal_settings()
+
     def _go_dashboard(self):
         if self.app:
             self.app.show_mayor_dashboard()
@@ -952,17 +968,17 @@ class RecordsFrame(tk.Frame):
             app_id = record.get("application_id")
 
         row = fetch_one("""
-            SELECT doc_school_id, doc_id_picture, doc_birth_cert,
-                   doc_grades, doc_cor
-            FROM applications WHERE application_id = %s
+            SELECT school_id_path, id_picture_path, birth_certificate_path,
+                   grades_path, cor_path
+            FROM application WHERE application_id = %s
         """, (app_id,))
 
         doc_labels = [
-            ("School ID",        row.get("doc_school_id")   if row else None),
-            ("ID Picture",       row.get("doc_id_picture")  if row else None),
-            ("Birth Certificate",row.get("doc_birth_cert")  if row else None),
-            ("Grades",           row.get("doc_grades")      if row else None),
-            ("Certificate of Registration", row.get("doc_cor") if row else None),
+            ("School ID",         row.get("school_id_path")        if row else None),
+            ("ID Picture",        row.get("id_picture_path")       if row else None),
+            ("Birth Certificate", row.get("birth_certificate_path") if row else None),
+            ("Grades",            row.get("grades_path")           if row else None),
+            ("Certificate of Registration", row.get("cor_path")    if row else None),
         ]
 
         root = self.winfo_toplevel()
@@ -1005,8 +1021,12 @@ class RecordsFrame(tk.Frame):
                         lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>",
                     lambda e: canvas.itemconfig(win_id, width=e.width))
-        canvas.bind_all("<MouseWheel>",
-                        lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"))
+
+        def _doc_scroll(e):
+            if canvas.winfo_exists():
+                canvas.yview_scroll(int(-e.delta / 120), "units")
+        canvas.bind("<MouseWheel>", _doc_scroll)
+        grid_frame.bind("<MouseWheel>", _doc_scroll)
 
         self._doc_images = []   # keep references alive
 
@@ -1024,14 +1044,12 @@ class RecordsFrame(tk.Frame):
 
             if blob:
                 try:
-                    img  = Image.open(io.BytesIO(blob))
+                    img  = Image.open(blob)  # blob is a file path now
                     img.thumbnail((320, 240))
                     photo = ImageTk.PhotoImage(img)
                     self._doc_images.append(photo)
-                    thumb = tk.Label(cell, image=photo, bg=WHITE,
-                                     cursor="hand2")
+                    thumb = tk.Label(cell, image=photo, bg=WHITE, cursor="hand2")
                     thumb.pack(padx=10, pady=10)
-                    # Click to view full size
                     thumb.bind("<Button-1>",
                                lambda e, b=blob, lbl=label:
                                self._view_full_image(b, lbl))
@@ -1039,8 +1057,7 @@ class RecordsFrame(tk.Frame):
                              bg=WHITE, fg=GRAY,
                              font=("Segoe UI", 8)).pack(pady=(0, 8))
                 except Exception:
-                    # Not an image — show download-style label
-                    tk.Label(cell, text="📎 File attached (not an image)",
+                    tk.Label(cell, text="📎 File attached (cannot preview)",
                              bg=WHITE, fg=PURPLE,
                              font=("Segoe UI", 9),
                              padx=10, pady=20).pack()
@@ -1063,10 +1080,10 @@ class RecordsFrame(tk.Frame):
                   activebackground="#D1D5DB",
                   command=dlg.destroy).pack(anchor="e", padx=24, pady=12)
 
-    def _view_full_image(self, blob, title):
-        """Open a full-size image in a new window."""
+    def _view_full_image(self, path, title):
+        """Open a full-size image from file path in a new window."""
         try:
-            img   = Image.open(io.BytesIO(blob))
+            img   = Image.open(path)
             root  = self.winfo_toplevel()
             win   = tk.Toplevel(root)
             win.title(title)
@@ -1104,13 +1121,21 @@ class RecordsFrame(tk.Frame):
         # ── Persist to DB ─────────────────────────────────────────────────────
         if execute:
             if action == "approve" and rtype == "renewal":
-                execute("UPDATE renewals SET status='approved' WHERE renewal_id=%s", (rid,))
+                execute("UPDATE renew SET status='approved' WHERE renewal_id=%s", (rid,))
             elif action == "reject" and rtype == "renewal":
-                execute("UPDATE renewals SET status='rejected' WHERE renewal_id=%s", (rid,))
+                execute("UPDATE renew SET status='rejected' WHERE renewal_id=%s", (rid,))
             elif action == "approve":
-                execute("UPDATE applications SET status='approved' WHERE application_id=%s", (rid,))
+                execute("UPDATE application SET status='approved' WHERE application_id=%s", (rid,))
             elif action == "reject":
-                execute("UPDATE applications SET status='rejected' WHERE application_id=%s", (rid,))
+                execute("UPDATE application SET status='rejected' WHERE application_id=%s", (rid,))
+            elif action == "archive" and rtype == "renewal":
+                execute("UPDATE renew SET archived=1 WHERE renewal_id=%s", (rid,))
+            elif action == "unarchive" and rtype == "renewal":
+                execute("UPDATE renew SET archived=0 WHERE renewal_id=%s", (rid,))
+            elif action == "archive":
+                execute("UPDATE application SET archived=1 WHERE application_id=%s", (rid,))
+            elif action == "unarchive":
+                execute("UPDATE application SET archived=0 WHERE application_id=%s", (rid,))
         # ── Reload from DB ────────────────────────────────────────────────────
         self._apps     = _load_apps()
         self._renewals = _load_renewals()

@@ -98,20 +98,19 @@ class ApplicationsFrame(tk.Frame):
 
             apps = fetch_all("""
                 SELECT application_id, first_name, middle_name, last_name,
-                       student_id, contact_number, municipality, barangay,
+                       student_id, contact_number, municipality, baranggay,
                        school_name, course, year_level, gwa,
                        status, submission_date
-                FROM applications
+                FROM application
                 WHERE user_id=%s
                 ORDER BY submission_date DESC
             """, (uid,)) or []
 
             renewals = fetch_all("""
                 SELECT r.renewal_id, r.status, r.submission_date,
-                       a.first_name, a.middle_name, a.last_name,
-                       a.student_id, a.course, a.year_level, a.gwa
-                FROM renewals r
-                LEFT JOIN applications a ON a.application_id = r.application_id
+                       r.first_name, r.middle_name, r.last_name,
+                       r.student_id, r.course, r.year_level, r.gwa
+                FROM renew r
                 WHERE r.user_id=%s
                 ORDER BY r.submission_date DESC
             """, (uid,)) or []
@@ -405,15 +404,15 @@ class ApplicationsFrame(tk.Frame):
 
             # Build file updates
             doc_cols = {
-                "school_id":  "doc_school_id",
-                "id_picture": "doc_id_picture",
-                "birth_cert": "doc_birth_cert",
-                "grades":     "doc_grades",
-                "cor":        "doc_cor",
+                "school_id":  "school_id_path",
+                "id_picture": "id_picture_path",
+                "birth_cert": "birth_certificate_path",
+                "grades":     "grades_path",
+                "cor":        "cor_path",
             }
             set_parts = [
                 "student_id=%s", "contact_number=%s",
-                "barangay=%s", "school_name=%s",
+                "baranggay=%s", "school_name=%s",
                 "course=%s", "year_level=%s", "gwa=%s",
             ]
             params = [
@@ -427,14 +426,13 @@ class ApplicationsFrame(tk.Frame):
             ]
             for key, col in doc_cols.items():
                 if files_[key]:
-                    with open(files_[key], "rb") as f:
-                        set_parts.append(f"{col}=%s")
-                        params.append(f.read())
+                    set_parts.append(f"{col}=%s")
+                    params.append(files_[key])  # store path
 
             params.append(app["application_id"])
             try:
                 execute(
-                    f"UPDATE applications SET {', '.join(set_parts)} WHERE application_id=%s",
+                    f"UPDATE application SET {', '.join(set_parts)} WHERE application_id=%s",
                     tuple(params))
                 dlg.destroy()
                 messagebox.showinfo("Saved", "Application updated successfully.")

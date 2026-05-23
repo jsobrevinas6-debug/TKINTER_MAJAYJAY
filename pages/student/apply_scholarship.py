@@ -247,7 +247,7 @@ class ApplyFrame(tk.Frame):
                 self._vars["surname"].set(user.get("last_name", "")),
             ])
             app = fetch_one(
-                "SELECT status FROM applications WHERE user_id=%s ORDER BY submission_date DESC LIMIT 1",
+                "SELECT status FROM application WHERE user_id=%s ORDER BY submission_date DESC LIMIT 1",
                 (user["user_id"],))
             if app:
                 self.after(0, self._show_blocked, app["status"])
@@ -344,21 +344,20 @@ class ApplyFrame(tk.Frame):
 
             file_data = {}
             for key, path in self._files.items():
-                with open(path, "rb") as f:
-                    file_data[key] = f.read()
+                file_data[key] = path  # store file path
 
             from datetime import datetime
             execute("""
-                INSERT INTO applications
+                INSERT INTO application
                     (user_id, first_name, middle_name, last_name,
                      student_id, contact_number,
-                     municipality, barangay, school_name,
-                     course, year_level, gwa, year_applied,
-                     essay,
-                     doc_school_id, doc_id_picture, doc_birth_cert,
-                     doc_grades, doc_cor,
+                     municipality, baranggay, school_name,
+                     course, year_level, gwa,
+                     reason,
+                     school_id_path, id_picture_path, birth_certificate_path,
+                     grades_path, cor_path,
                      status)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending')
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending')
             """, (
                 uid,
                 self._vars["firstName"].get().strip(),
@@ -372,7 +371,6 @@ class ApplyFrame(tk.Frame):
                 self._vars["course"].get().strip(),
                 self._vars["gradeLevel"].get(),
                 float(self._vars["gwa"].get().strip()),
-                datetime.now().year,
                 reason,
                 file_data["school_id"],
                 file_data["id_picture"],
